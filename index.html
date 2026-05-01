@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LocalBrowse</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ── 主题变量 ─────────────────────────────────────── */
+:root {
+  --bg:       #ffffff;
+  --bg2:      #f6f8fa;
+  --bg3:      #eaeef2;
+  --border:   #d0d7de;
+  --text:     #1f2328;
+  --text-dim: #656d76;
+  --text-hi:  #1f2328;
+  --accent:   #0969da;
+  --hl-theme: "github";
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;
+          --text:#c9d1d9;--text-dim:#8b949e;--text-hi:#f0f6fc;--accent:#58a6ff;
+          --hl-theme:"github-dark"; }
+}
+[data-theme="light"] {
+  --bg:#ffffff;--bg2:#f6f8fa;--bg3:#eaeef2;--border:#d0d7de;
+  --text:#1f2328;--text-dim:#656d76;--text-hi:#1f2328;--accent:#0969da;
+}
+[data-theme="dark"] {
+  --bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;
+  --text:#c9d1d9;--text-dim:#8b949e;--text-hi:#f0f6fc;--accent:#58a6ff;
+}
+
+/* ── highlight.js 主题切换 ─────────────────────────── */
+#hl-light { }
+#hl-dark  { display: none; }
+[data-theme="dark"]  #hl-light, [data-theme="dark"]  #hl-dark  { display: block; }
+[data-theme="dark"]  #hl-light { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) #hl-light { display: none; }
+  :root:not([data-theme]) #hl-dark  { display: block; }
+}
+
+body {
+  font-family: -apple-system,"Segoe UI","Noto Sans SC",sans-serif;
+  background: var(--bg); color: var(--text);
+  height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+}
+
+/* ── Header ─────────────────────────────────────────── */
+header {
+  height: 44px; background: var(--bg2); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 1rem; gap: 0.75rem; flex-shrink: 0;
+}
+header h1 { color: var(--text-hi); font-size: 0.95rem; font-weight: 600; }
+.hpath {
+  flex: 1; color: var(--text-dim); font-size: 0.78rem; font-family: monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.theme-btn, .refresh-btn {
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-dim); cursor: pointer; padding: 0.2rem 0.5rem;
+  font-size: 0.8rem; transition: color 0.15s;
+}
+.open-btn {
+  background: var(--accent); border: 1px solid var(--accent); border-radius: 6px;
+  color: white; cursor: pointer; padding: 0.28rem 0.72rem;
+  font-size: 0.8rem; transition: filter 0.15s, opacity 0.15s;
+}
+.theme-btn:hover, .refresh-btn:hover { color: var(--text-hi); }
+.open-btn:hover { filter: brightness(1.05); }
+.open-btn:disabled { opacity: 0.65; cursor: wait; }
+.refresh-btn.spinning { animation: spin 0.6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Layout ──────────────────────────────────────────── */
+.layout { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Sidebar ─────────────────────────────────────────── */
+aside {
+  width: 260px; background: var(--bg2); border-right: 1px solid var(--border);
+  overflow-y: auto; flex-shrink: 0; padding: 0.5rem 0;
+}
+aside::-webkit-scrollbar { width: 4px; }
+aside::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.ti {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.22rem 0.75rem; cursor: pointer;
+  font-size: 0.82rem; color: var(--text-dim); user-select: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ti:hover { background: var(--bg3); color: var(--text); }
+.ti.active { background: var(--bg3); color: var(--accent); font-weight: 500; }
+.ti .arr { flex-shrink: 0; width: 10px; font-size: 0.6rem; opacity: 0.6; }
+.ti .ic  { flex-shrink: 0; }
+.ti .nm  { overflow: hidden; text-overflow: ellipsis; }
+.tc { display: none; }
+.tc.open { display: block; }
+
+/* ── Main ────────────────────────────────────────────── */
+main { flex: 1; overflow-y: auto; padding: 2rem 2.5rem; }
+main::-webkit-scrollbar { width: 6px; }
+main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Markdown ────────────────────────────────────────── */
+.md { max-width: 800px; line-height: 1.7; color: var(--text); }
+.md h1,.md h2,.md h3,.md h4 { color: var(--text-hi); margin: 1.5rem 0 0.75rem; font-weight: 600; }
+.md h1 { font-size: 1.75rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
+.md h2 { font-size: 1.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+.md h3 { font-size: 1.1rem; }
+.md p  { margin: 0.6rem 0; }
+.md a  { color: var(--accent); text-decoration: none; }
+.md a:hover { text-decoration: underline; }
+.md strong { color: var(--text-hi); }
+.md code {
+  font-family: "Cascadia Code","Fira Code",Consolas,monospace; font-size: 0.85em;
+  background: var(--bg3); padding: 0.15em 0.4em; border-radius: 4px;
+}
+.md pre {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 1rem; overflow-x: auto; margin: 1rem 0;
+}
+.md pre code { background: none; padding: 0; font-size: 0.85rem; }
+.md blockquote { border-left: 3px solid var(--border); padding-left: 1rem; color: var(--text-dim); margin: 0.75rem 0; }
+.md table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.88rem; }
+.md th,.md td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; }
+.md th { background: var(--bg2); color: var(--text-hi); }
+.md tr:nth-child(even) td { background: var(--bg2); }
+.md ul,.md ol { padding-left: 1.5rem; margin: 0.5rem 0; }
+.md li { margin: 0.25rem 0; }
+.md li input[type=checkbox] { margin-right: 0.4rem; }
+.md hr { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+.md img { max-width: 100%; border-radius: 6px; }
+
+/* ── 代码文件 ────────────────────────────────────────── */
+.codefile {
+  max-width: 900px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+  overflow: hidden;
+}
+.codefile-header {
+  padding: 0.5rem 1rem; border-bottom: 1px solid var(--border);
+  font-size: 0.78rem; color: var(--text-dim); font-family: monospace;
+}
+.codefile pre { padding: 1rem; overflow-x: auto; margin: 0; background: none; }
+.codefile pre code { font-size: 0.83rem; }
+
+/* ── 图片 ────────────────────────────────────────────── */
+.imgview { max-width: 800px; }
+.imgview img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); }
+.imgview .caption { margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-dim); font-family: monospace; }
+
+/* ── SVG ─────────────────────────────────────────────── */
+.svgview { max-width: 800px; }
+.svgview svg { max-width: 100%; border: 1px solid var(--border); border-radius: 6px; background: white; padding: 1rem; }
+.svgview .caption { margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-dim); font-family: monospace; }
+
+/* ── 纯文本 ──────────────────────────────────────────── */
+.txtview {
+  max-width: 800px; background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 1rem;
+}
+.txtview pre { font-family: "Cascadia Code",Consolas,monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
+
+/* ── 消息 ────────────────────────────────────────────── */
+.msg {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; height: 60vh; gap: 0.75rem;
+  color: var(--text-dim); text-align: center;
+}
+.msg code {
+  background: var(--bg2); border: 1px solid var(--border);
+  padding: 0.4rem 0.8rem; border-radius: 6px; font-family: monospace; color: var(--accent);
+}
+</style>
+<!-- highlight.js: 两套主题，按主题切换显示 -->
+<link id="hl-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link id="hl-dark"  rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+
+<header>
+  <h1>LocalBrowse</h1>
+  <span class="hpath" id="hpath">—</span>
+  <button class="open-btn" id="open-folder-btn" title="选择要浏览的文件夹">打开文件夹</button>
+  <button class="refresh-btn" id="refresh-btn" title="刷新文件树">↻</button>
+  <button class="theme-btn" id="theme-btn" title="切换明暗主题">🌓</button>
+</header>
+
+<div class="layout">
+  <aside id="sidebar"></aside>
+  <main id="main"><div class="msg"><span>加载中…</span></div></main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+<script>
+// ── 主题 ──────────────────────────────────────────────
+const html = document.documentElement;
+const saved = localStorage.getItem('theme');
+if (saved) html.dataset.theme = saved;
+
+document.getElementById('theme-btn').addEventListener('click', () => {
+  const cur = html.dataset.theme;
+  const sysDark = matchMedia('(prefers-color-scheme: dark)').matches;
+  let next;
+  if (!cur) next = sysDark ? 'light' : 'dark';
+  else if (cur === 'dark') next = 'light';
+  else next = 'dark';
+  html.dataset.theme = next;
+  localStorage.setItem('theme', next);
+});
+
+// ── 文件类型判断 ──────────────────────────────────────
+const EXT_LANG = {
+  py:'python', js:'javascript', ts:'typescript', jsx:'javascript', tsx:'typescript',
+  cpp:'cpp', c:'c', h:'cpp', ino:'cpp',
+  json:'json', yaml:'yaml', yml:'yaml',
+  css:'css', html:'xml', sh:'bash', bat:'batch',
+  rs:'rust', go:'go', java:'java', rb:'ruby', php:'php',
+  swift:'swift', kt:'kotlin', sql:'sql', toml:'toml', md:'markdown',
+  scad:'javascript', xml:'xml', csv:'plaintext', r:'r', m:'matlab',
+  lua:'lua', dart:'dart', tf:'plaintext', proto:'protobuf',
+  conf:'plaintext', cfg:'plaintext', properties:'plaintext', gradle:'groovy',
+};
+const IMAGE_EXTS = new Set(['png','jpg','jpeg','gif','webp']);
+const TEXT_EXTS  = new Set(['txt']);
+
+function fileKind(path) {
+  const ext = path.split('.').pop().toLowerCase();
+  if (ext === 'md')              return 'markdown';
+  if (ext === 'html')            return 'html';
+  if (ext === 'svg')             return 'svg';
+  if (IMAGE_EXTS.has(ext))       return 'image';
+  if (TEXT_EXTS.has(ext))        return 'text';
+  if (EXT_LANG[ext])             return 'code';
+  return 'code';
+}
+
+function fileIcon(ext) {
+  if (ext === 'md')                      return '📝';
+  if (['png','jpg','jpeg','gif','webp'].includes(ext)) return '🖼';
+  if (ext === 'svg')                     return '🎨';
+  if (ext === 'txt')                     return '📄';
+  if (['json','yaml','yml','toml'].includes(ext))      return '⚙️';
+  if (['py','js','ts','jsx','tsx','rs','go','java','rb','php','swift','kt'].includes(ext)) return '💻';
+  if (['cpp','c','h','ino'].includes(ext)) return '🔧';
+  if (['sh','bat'].includes(ext))        return '▶';
+  return '📄';
+}
+
+function rawFileUrl(path) {
+  return '/root/' + path.split('/').map(encodeURIComponent).join('/');
+}
+
+// ── marked 配置 ───────────────────────────────────────
+marked.use({
+  renderer: {
+    link(href, title, text) {
+      if (href && !/^(https?:|mailto:|#)/i.test(href)) {
+        const safeHref = String(href).replace(/"/g, '&quot;');
+        const safeText = text ?? href;
+        const titleAttr = title ? ` title="${String(title).replace(/"/g, '&quot;')}"` : '';
+        return `<a href="#" data-file-link="${safeHref}"${titleAttr}>${safeText}</a>`;
+      }
+      const titleAttr = title ? ` title="${String(title).replace(/"/g, '&quot;')}"` : '';
+      return `<a href="${href || '#'}"${titleAttr}>${text ?? href ?? ''}</a>`;
+    },
+    code(code, lang) {
+      const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
+      const highlighted = hljs.highlight(code, { language }).value;
+      return `<pre><code class="hljs language-${language}">${highlighted}</code></pre>`;
+    }
+  },
+  gfm: true,
+});
+
+// ── 文件树渲染 ────────────────────────────────────────
+let activePath = null;
+let currentRoot = '';
+
+function normalizePath(path) {
+  const parts = [];
+  path.replace(/\\/g, '/').split('/').forEach(part => {
+    if (!part || part === '.') return;
+    if (part === '..') {
+      parts.pop();
+      return;
+    }
+    parts.push(part);
+  });
+  return parts.join('/');
+}
+
+function resolveRelativePath(fromPath, targetPath) {
+  if (!targetPath) return '';
+  if (/^(https?:|mailto:|#)/i.test(targetPath)) return targetPath;
+  if (targetPath.startsWith('/')) return normalizePath(targetPath.slice(1));
+  const baseParts = fromPath.split('/');
+  baseParts.pop();
+  return normalizePath([...baseParts, targetPath].join('/'));
+}
+
+function renderTree(nodes, container, depth = 0) {
+  nodes.forEach(node => {
+    const pad = `${0.75 + depth * 0.875}rem`;
+    if (node.type === 'dir') {
+      const row = document.createElement('div');
+      row.className = 'ti';
+      row.style.paddingLeft = pad;
+      row.innerHTML = `<span class="arr">▶</span><span class="ic">📁</span><span class="nm">${node.name}</span>`;
+
+      const kids = document.createElement('div');
+      kids.className = 'tc';
+      renderTree(node.children, kids, depth + 1);
+
+      row.addEventListener('click', () => {
+        const open = kids.classList.toggle('open');
+        row.querySelector('.arr').textContent = open ? '▼' : '▶';
+      });
+      container.appendChild(row);
+      container.appendChild(kids);
+    } else {
+      const ext = node.ext || node.name.split('.').pop().toLowerCase();
+      const row = document.createElement('div');
+      row.className = 'ti';
+      row.dataset.path = node.path;
+      row.style.paddingLeft = pad;
+      row.innerHTML = `<span class="arr"></span><span class="ic">${fileIcon(ext)}</span><span class="nm">${node.name}</span>`;
+      row.addEventListener('click', () => loadFile(node.path));
+      container.appendChild(row);
+    }
+  });
+}
+
+function setActive(path) {
+  document.querySelectorAll('.ti[data-path]').forEach(el => {
+    el.classList.toggle('active', el.dataset.path === path);
+    if (el.dataset.path === path) {
+      // 展开所有父级
+      let p = el.parentElement;
+      while (p && p.id !== 'sidebar') {
+        if (p.classList.contains('tc')) {
+          p.classList.add('open');
+          const prev = p.previousElementSibling;
+          if (prev) { const a = prev.querySelector('.arr'); if (a) a.textContent = '▼'; }
+        }
+        p = p.parentElement;
+      }
+    }
+  });
+}
+
+// ── 文件加载与渲染 ────────────────────────────────────
+async function loadFile(path) {
+  activePath = path;
+  updateHeaderPath(path);
+  document.getElementById('main').innerHTML = '<div class="msg"><span>加载中…</span></div>';
+  document.getElementById('main').style.padding = '';  // 重置（可能被 iframe 清空过）
+  setActive(path);
+
+  const kind = fileKind(path);
+
+  // 图片：直接用 URL，不走 API
+  if (kind === 'image') {
+    document.getElementById('main').innerHTML = `
+      <div class="imgview">
+        <img src="${rawFileUrl(path)}" alt="${path}">
+        <div class="caption">${path}</div>
+      </div>`;
+    return;
+  }
+
+  // HTML：iframe 渲染
+  if (kind === 'html') {
+    document.getElementById('main').innerHTML = '';
+    const iframe = document.createElement('iframe');
+    iframe.src = rawFileUrl(path);
+    iframe.style.cssText = 'width:100%;height:calc(100vh - 44px);border:none;display:block;';
+    document.getElementById('main').style.padding = '0';
+    document.getElementById('main').appendChild(iframe);
+    return;
+  }
+
+  // 文本类文件：走 /api/file
+  try {
+    const res = await fetch(`/api/file?path=${encodeURIComponent(path)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { content, ext } = await res.json();
+    renderContent(kind, content, path, ext);
+  } catch (e) {
+    document.getElementById('main').innerHTML =
+      `<div class="msg"><span>读取失败：${e.message}</span></div>`;
+  }
+}
+
+function updateHeaderPath(path = '') {
+  const display = path ? (currentRoot ? `${currentRoot} / ${path}` : path) : (currentRoot || '—');
+  document.getElementById('hpath').textContent = display;
+  document.getElementById('hpath').title = display;
+}
+
+function renderContent(kind, content, path, ext) {
+  const main = document.getElementById('main');
+
+  if (kind === 'markdown') {
+    const div = document.createElement('div');
+    div.className = 'md';
+    div.innerHTML = marked.parse(content);
+    div.querySelectorAll('input[type=checkbox]').forEach(cb => cb.disabled = true);
+    div.querySelectorAll('a[data-file-link]').forEach(a => {
+      const href = a.getAttribute('data-file-link');
+      if (!href) return;
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        loadFile(resolveRelativePath(path, href));
+      });
+    });
+    main.innerHTML = '';
+    main.appendChild(div);
+
+  } else if (kind === 'svg') {
+    main.innerHTML = `
+      <div class="svgview">
+        ${content}
+        <div class="caption">${path}</div>
+      </div>`;
+
+  } else if (kind === 'text') {
+    const div = document.createElement('div');
+    div.className = 'txtview';
+    const pre = document.createElement('pre');
+    pre.textContent = content;
+    div.appendChild(pre);
+    main.innerHTML = '';
+    main.appendChild(div);
+
+  } else {
+    // 代码文件
+    const lang = EXT_LANG[ext] || 'plaintext';
+    const highlighted = hljs.getLanguage(lang)
+      ? hljs.highlight(content, { language: lang }).value
+      : hljs.highlightAuto(content).value;
+
+    main.innerHTML = `
+      <div class="codefile">
+        <div class="codefile-header">${path}</div>
+        <pre><code class="hljs">${highlighted}</code></pre>
+      </div>`;
+  }
+}
+
+// ── 初始化 ────────────────────────────────────────────
+async function init() {
+  if (location.protocol === 'file:') {
+    document.getElementById('main').innerHTML = `
+      <div class="msg">
+        <span>请先启动本地服务器</span>
+        <code>双击 start.bat</code>
+      </div>`;
+    return;
+  }
+
+  await loadTree();
+  if (activePath) {
+    loadFile(activePath);
+  }
+}
+
+async function loadTree() {
+  try {
+    const tree = await fetch('/api/tree').then(r => r.json());
+    const sidebar = document.getElementById('sidebar');
+    sidebar.innerHTML = '';
+    currentRoot = tree.root || '';
+    renderTree(tree.items || [], sidebar);
+    updateHeaderPath(activePath);
+    if (activePath) {
+      const exists = sidebar.querySelector(`[data-path="${CSS.escape(activePath)}"]`);
+      if (exists) setActive(activePath);
+      else {
+        activePath = null;
+        document.getElementById('main').innerHTML =
+          '<div class="msg"><span>请选择左侧文件开始浏览</span></div>';
+      }
+    } else {
+      const defaultFile = (tree.items || []).find(node => node.type === 'file' && ['README.md', 'index.md'].includes(node.path));
+      if (defaultFile) {
+        loadFile(defaultFile.path);
+      } else {
+        document.getElementById('main').innerHTML =
+          '<div class="msg"><span>请选择左侧文件开始浏览</span></div>';
+      }
+    }
+  } catch {
+    document.getElementById('sidebar').innerHTML =
+      `<div style="padding:1rem;color:var(--text-dim);font-size:0.8rem">加载失败</div>`;
+  }
+}
+
+document.getElementById('refresh-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  await loadTree();
+  btn.classList.remove('spinning');
+});
+
+document.getElementById('open-folder-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('open-folder-btn');
+  btn.disabled = true;
+  btn.textContent = '选择中...';
+  try {
+    const res = await fetch('/api/select-root', { method: 'POST' });
+    const data = await res.json();
+    if (data.root) currentRoot = data.root;
+    updateHeaderPath(activePath);
+    if (data.ok) {
+      activePath = null;
+      const sidebar = document.getElementById('sidebar');
+      sidebar.innerHTML = '';
+      renderTree(data.items || [], sidebar);
+      document.getElementById('main').innerHTML =
+        '<div class="msg"><span>文件夹已切换，请从左侧选择文件</span></div>';
+    } else if (!data.cancelled) {
+      document.getElementById('main').innerHTML =
+        `<div class="msg"><span>打开文件夹失败：${data.error || '未知错误'}</span></div>`;
+    }
+  } catch (e) {
+    document.getElementById('main').innerHTML =
+      `<div class="msg"><span>打开文件夹失败：${e.message}</span></div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '打开文件夹';
+  }
+});
+
+init();
+</script>
+</body>
+</html>
