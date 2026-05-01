@@ -6,6 +6,7 @@ LocalBrowse 本地文件浏览服务器
 
 import http.server
 import json
+import mimetypes
 import os
 import sys
 import threading
@@ -29,17 +30,120 @@ ROOT_LOCK = Lock()
 EXCLUDE = {'.git', '.claude', '__pycache__', 'node_modules', '.vscode', '.idea'}
 VISIBLE_DOT_ENTRIES = {'.memory'}
 
-TEXT_EXTS  = {'.md', '.txt', '.py', '.js', '.ts', '.jsx', '.tsx',
-              '.cpp', '.c', '.h', '.ino', '.json', '.yaml', '.yml',
-              '.css', '.html', '.sh', '.bat', '.rs', '.go', '.java',
-              '.rb', '.php', '.swift', '.kt', '.sql', '.toml', '.ini',
-              '.env', '.gitignore', '.cmake', '.makefile',
-              '.scad', '.xml', '.csv', '.tsv', '.r', '.m', '.lua',
-              '.dart', '.ex', '.exs', '.clj', '.hs', '.vim', '.conf',
-              '.cfg', '.properties', '.gradle', '.tf', '.proto'}
-IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
-SVG_EXTS   = {'.svg'}
-ALL_EXTS   = TEXT_EXTS | IMAGE_EXTS | SVG_EXTS
+SAMPLE_BYTES = 8192
+MAX_TEXT_BYTES = 2 * 1024 * 1024
+
+CODE_EXTS = {
+    '.bat', '.c', '.cfg', '.clj', '.cmake', '.conf', '.cpp', '.cs', '.css',
+    '.dart', '.env', '.ex', '.exs', '.go', '.gradle', '.h', '.hs', '.ini',
+    '.ino', '.java', '.js', '.json', '.jsx', '.kt', '.lua', '.m',
+    '.makefile', '.mod', '.php', '.properties', '.proto', '.py', '.r', '.rb',
+    '.rs', '.scad', '.sh', '.sql', '.sum', '.swift', '.tf', '.toml', '.ts',
+    '.tsx', '.vim', '.xml', '.yaml', '.yml',
+}
+
+TEXT_NAMES = {'.gitignore', 'makefile', 'dockerfile'}
+
+IMAGE_MAGIC = (
+    (b'\x89PNG\r\n\x1a\n', 'image/png'),
+    (b'\xff\xd8\xff', 'image/jpeg'),
+    (b'GIF87a', 'image/gif'),
+    (b'GIF89a', 'image/gif'),
+    (b'RIFF', 'image/webp'),
+)
+AUDIO_MAGIC = (
+    (b'ID3', 'audio/mpeg'),
+    (b'\xff\xfb', 'audio/mpeg'),
+    (b'OggS', 'audio/ogg'),
+    (b'fLaC', 'audio/flac'),
+)
+VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov', '.m4v'}
+AUDIO_EXTS = {'.mp3', '.wav', '.ogg', '.flac', '.m4a'}
+IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.avif'}
+
+
+def file_ext(path: Path) -> str:
+    suffix = path.suffix.lower()
+    return suffix[1:] if suffix else path.name.lower().lstrip('.')
+
+
+def looks_binary(sample: bytes) -> bool:
+    if b'\x00' in sample:
+        return True
+    if not sample:
+        return False
+    control = sum(1 for b in sample if b < 32 and b not in (8, 9, 10, 12, 13, 27))
+    return control / len(sample) > 0.30
+
+
+def decode_text_bytes(data: bytes):
+    encodings = ('utf-8-sig', 'utf-16', 'gb18030')
+    for encoding in encodings:
+        try:
+            return data.decode(encoding), encoding
+        except UnicodeDecodeError:
+            pass
+    return data.decode('utf-8', errors='replace'), 'utf-8-replace'
+
+
+def sniff_media(path: Path, sample: bytes):
+    ext = path.suffix.lower()
+    lower_name = path.name.lower()
+
+    if lower_name.endswith('.svg') or sample.lstrip().lower().startswith(b'<svg'):
+        return 'svg', 'image/svg+xml'
+    if sample.startswith(b'%PDF-'):
+        return 'pdf', 'application/pdf'
+    for magic, mime in IMAGE_MAGIC:
+        if sample.startswith(magic):
+            if mime == 'image/webp' and sample[8:12] != b'WEBP':
+                continue
+            return 'image', mime
+    for magic, mime in AUDIO_MAGIC:
+        if sample.startswith(magic):
+            return 'audio', mime
+    if ext in IMAGE_EXTS:
+        return 'image', mimetypes.guess_type(path.name)[0] or 'image/*'
+    if ext in AUDIO_EXTS:
+        return 'audio', mimetypes.guess_type(path.name)[0] or 'audio/*'
+    if ext in VIDEO_EXTS:
+        return 'video', mimetypes.guess_type(path.name)[0] or 'video/*'
+    return None, None
+
+
+def classify_file(path: Path):
+    try:
+        with path.open('rb') as f:
+            sample = f.read(SAMPLE_BYTES)
+    except OSError:
+        return {'previewable': False, 'previewKind': 'unreadable', 'mime': None}
+
+    media_kind, mime = sniff_media(path, sample)
+    if media_kind:
+        return {'previewable': True, 'previewKind': media_kind, 'mime': mime}
+
+    if looks_binary(sample):
+        return {'previewable': False, 'previewKind': 'binary', 'mime': mimetypes.guess_type(path.name)[0]}
+
+    text, _encoding = decode_text_bytes(sample)
+    stripped = text.lstrip().lower()
+    ext = path.suffix.lower()
+    lower_name = path.name.lower()
+
+    if ext == '.md':
+        kind = 'markdown'
+        mime = 'text/markdown'
+    elif ext in ('.html', '.htm') or stripped.startswith('<!doctype html') or stripped.startswith('<html'):
+        kind = 'html'
+        mime = 'text/html'
+    elif ext in CODE_EXTS or lower_name in TEXT_NAMES:
+        kind = 'code'
+        mime = 'text/plain'
+    else:
+        kind = 'text'
+        mime = 'text/plain'
+
+    return {'previewable': True, 'previewKind': kind, 'mime': mime}
 
 
 def get_current_root() -> Path:
@@ -61,7 +165,10 @@ def build_tree(path: Path, rel: Path = Path('.')):
         return result
 
     for entry in entries:
-        if (entry.name.startswith('.') and entry.name not in VISIBLE_DOT_ENTRIES) or entry.name in EXCLUDE:
+        if entry.is_dir() and (
+            entry.name in EXCLUDE
+            or (entry.name.startswith('.') and entry.name not in VISIBLE_DOT_ENTRIES)
+        ):
             continue
         rel_entry = rel / entry.name
         if entry.is_dir():
@@ -73,12 +180,14 @@ def build_tree(path: Path, rel: Path = Path('.')):
                     'type': 'dir',
                     'children': children,
                 })
-        elif entry.is_file() and entry.suffix.lower() in ALL_EXTS:
+        elif entry.is_file():
+            preview = classify_file(entry)
             result.append({
                 'name': entry.name,
                 'path': str(rel_entry).replace('\\', '/'),
                 'type': 'file',
-                'ext':  entry.suffix.lower().lstrip('.'),
+                'ext': file_ext(entry),
+                **preview,
             })
     return result
 
@@ -100,7 +209,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif parsed.path == '/api/file':
             params = urllib.parse.parse_qs(parsed.query)
             rel = params.get('path', [''])[0]
-            self._serve_md(rel)
+            self._serve_text(rel)
 
         elif parsed.path == '/api/current-root':
             self._send_json({'root': str(get_current_root())})
@@ -126,26 +235,47 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         self.send_error(404)
 
-    def _serve_md(self, rel_path):
+    def _serve_text(self, rel_path):
         full = self._resolve_in_root(rel_path)
         if full is None:
             self.send_error(403)
             return
 
-        if not full.is_file() or full.suffix.lower() not in TEXT_EXTS | SVG_EXTS:
+        if not full.is_file():
             self.send_error(404)
             return
 
-        content = full.read_text(encoding='utf-8', errors='replace')
-        self._send_json({'content': content, 'path': rel_path,
-                         'ext': full.suffix.lower().lstrip('.')})
+        info = classify_file(full)
+        if not info['previewable'] or info['previewKind'] not in {'markdown', 'html', 'svg', 'code', 'text'}:
+            self.send_error(415)
+            return
+
+        try:
+            data = full.read_bytes()
+        except OSError:
+            self.send_error(404)
+            return
+
+        truncated = len(data) > MAX_TEXT_BYTES
+        if truncated:
+            data = data[:MAX_TEXT_BYTES]
+
+        content, encoding = decode_text_bytes(data)
+        self._send_json({
+            'content': content,
+            'path': rel_path,
+            'ext': file_ext(full),
+            'kind': info['previewKind'],
+            'encoding': encoding,
+            'truncated': truncated,
+        })
 
     def _serve_raw(self, rel_path):
         full = self._resolve_in_root(rel_path)
         if full is None:
             self.send_error(403)
             return
-        if not full.is_file() or full.suffix.lower() not in ALL_EXTS:
+        if not full.is_file():
             self.send_error(404)
             return
 
@@ -155,7 +285,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
             return
 
-        content_type = self.guess_type(str(full))
+        info = classify_file(full)
+        content_type = info.get('mime') or mimetypes.guess_type(full.name)[0] or 'application/octet-stream'
         self.send_response(200)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(body)))

@@ -17,30 +17,23 @@
   --text-dim: #656d76;
   --text-hi:  #1f2328;
   --accent:   #0969da;
+  --preview-bg: #ffffff;
   --hl-theme: "github";
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;
           --text:#c9d1d9;--text-dim:#8b949e;--text-hi:#f0f6fc;--accent:#58a6ff;
-          --hl-theme:"github-dark"; }
+          --preview-bg:#000000;--hl-theme:"github-dark"; }
 }
 [data-theme="light"] {
   --bg:#ffffff;--bg2:#f6f8fa;--bg3:#eaeef2;--border:#d0d7de;
   --text:#1f2328;--text-dim:#656d76;--text-hi:#1f2328;--accent:#0969da;
+  --preview-bg:#ffffff;
 }
 [data-theme="dark"] {
   --bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#30363d;
   --text:#c9d1d9;--text-dim:#8b949e;--text-hi:#f0f6fc;--accent:#58a6ff;
-}
-
-/* ── highlight.js 主题切换 ─────────────────────────── */
-#hl-light { }
-#hl-dark  { display: none; }
-[data-theme="dark"]  #hl-light, [data-theme="dark"]  #hl-dark  { display: block; }
-[data-theme="dark"]  #hl-light { display: none; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) #hl-light { display: none; }
-  :root:not([data-theme]) #hl-dark  { display: block; }
+  --preview-bg:#000000;
 }
 
 body {
@@ -96,17 +89,23 @@ aside::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; 
 .ti.active { background: var(--bg3); color: var(--accent); font-weight: 500; }
 .ti .arr { flex-shrink: 0; width: 10px; font-size: 0.6rem; opacity: 0.6; }
 .ti .ic  { flex-shrink: 0; }
-.ti .nm  { overflow: hidden; text-overflow: ellipsis; }
+.ti .nm  { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.ti .badge {
+  flex-shrink: 0; margin-left: auto; border: 1px solid var(--border);
+  border-radius: 999px; padding: 0.05rem 0.32rem; font-size: 0.66rem;
+  color: var(--text-dim); background: var(--bg);
+}
+.ti .badge.no { opacity: 0.75; }
 .tc { display: none; }
 .tc.open { display: block; }
 
 /* ── Main ────────────────────────────────────────────── */
-main { flex: 1; overflow-y: auto; padding: 2rem 2.5rem; }
+main { flex: 1; overflow-y: auto; padding: 2rem 2.5rem; background: var(--preview-bg); }
 main::-webkit-scrollbar { width: 6px; }
 main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 /* ── Markdown ────────────────────────────────────────── */
-.md { max-width: 800px; line-height: 1.7; color: var(--text); }
+.md { max-width: 800px; line-height: 1.7; color: var(--text); background: var(--preview-bg); }
 .md h1,.md h2,.md h3,.md h4 { color: var(--text-hi); margin: 1.5rem 0 0.75rem; font-weight: 600; }
 .md h1 { font-size: 1.75rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
 .md h2 { font-size: 1.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
@@ -138,7 +137,7 @@ main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 /* ── 代码文件 ────────────────────────────────────────── */
 .codefile {
   max-width: 900px;
-  background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+  background: var(--preview-bg); border: 1px solid var(--border); border-radius: 6px;
   overflow: hidden;
 }
 .codefile-header {
@@ -147,20 +146,22 @@ main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 .codefile pre { padding: 1rem; overflow-x: auto; margin: 0; background: none; }
 .codefile pre code { font-size: 0.83rem; }
+.codefile .hljs, .md pre .hljs { background: var(--preview-bg); }
 
 /* ── 图片 ────────────────────────────────────────────── */
-.imgview { max-width: 800px; }
+.imgview { max-width: 800px; background: var(--preview-bg); }
 .imgview img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); }
 .imgview .caption { margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-dim); font-family: monospace; }
+.caption { margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-dim); font-family: monospace; }
 
 /* ── SVG ─────────────────────────────────────────────── */
 .svgview { max-width: 800px; }
-.svgview svg { max-width: 100%; border: 1px solid var(--border); border-radius: 6px; background: white; padding: 1rem; }
+.svgview svg { max-width: 100%; border: 1px solid var(--border); border-radius: 6px; background: var(--preview-bg); padding: 1rem; }
 .svgview .caption { margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-dim); font-family: monospace; }
 
 /* ── 纯文本 ──────────────────────────────────────────── */
 .txtview {
-  max-width: 800px; background: var(--bg2); border: 1px solid var(--border);
+  max-width: 800px; background: var(--preview-bg); border: 1px solid var(--border);
   border-radius: 6px; padding: 1rem;
 }
 .txtview pre { font-family: "Cascadia Code",Consolas,monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
@@ -203,6 +204,18 @@ const html = document.documentElement;
 const saved = localStorage.getItem('theme');
 if (saved) html.dataset.theme = saved;
 
+function activeTheme() {
+  return html.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+}
+
+function syncHighlightTheme() {
+  const dark = activeTheme() === 'dark';
+  document.getElementById('hl-light').disabled = dark;
+  document.getElementById('hl-dark').disabled = !dark;
+}
+
+syncHighlightTheme();
+
 document.getElementById('theme-btn').addEventListener('click', () => {
   const cur = html.dataset.theme;
   const sysDark = matchMedia('(prefers-color-scheme: dark)').matches;
@@ -212,6 +225,11 @@ document.getElementById('theme-btn').addEventListener('click', () => {
   else next = 'dark';
   html.dataset.theme = next;
   localStorage.setItem('theme', next);
+  syncHighlightTheme();
+});
+
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (!html.dataset.theme) syncHighlightTheme();
 });
 
 // ── 文件类型判断 ──────────────────────────────────────
@@ -225,22 +243,15 @@ const EXT_LANG = {
   scad:'javascript', xml:'xml', csv:'plaintext', r:'r', m:'matlab',
   lua:'lua', dart:'dart', tf:'plaintext', proto:'protobuf',
   conf:'plaintext', cfg:'plaintext', properties:'plaintext', gradle:'groovy',
+  mod:'plaintext', sum:'plaintext', gitignore:'plaintext',
 };
-const IMAGE_EXTS = new Set(['png','jpg','jpeg','gif','webp']);
-const TEXT_EXTS  = new Set(['txt']);
 
-function fileKind(path) {
-  const ext = path.split('.').pop().toLowerCase();
-  if (ext === 'md')              return 'markdown';
-  if (ext === 'html')            return 'html';
-  if (ext === 'svg')             return 'svg';
-  if (IMAGE_EXTS.has(ext))       return 'image';
-  if (TEXT_EXTS.has(ext))        return 'text';
-  if (EXT_LANG[ext])             return 'code';
-  return 'code';
-}
-
-function fileIcon(ext) {
+function fileIcon(kind, ext) {
+  if (kind === 'image')                   return '🖼️';
+  if (kind === 'audio')                   return '🎵';
+  if (kind === 'video')                   return '🎬';
+  if (kind === 'pdf')                     return '📄';
+  if (kind === 'binary' || kind === 'unreadable') return '📦';
   if (ext === 'md')                      return '📝';
   if (['png','jpg','jpeg','gif','webp'].includes(ext)) return '🖼';
   if (ext === 'svg')                     return '🎨';
@@ -252,8 +263,63 @@ function fileIcon(ext) {
   return '📄';
 }
 
+function previewLabel(node) {
+  if (!node.previewable) return '不可预览';
+  const labels = {
+    markdown: 'Markdown',
+    html: 'HTML',
+    svg: 'SVG',
+    image: '图片',
+    audio: '音频',
+    video: '视频',
+    pdf: 'PDF',
+    code: '文本',
+    text: '文本',
+  };
+  return labels[node.previewKind] || '可预览';
+}
+
 function rawFileUrl(path) {
   return '/root/' + path.split('/').map(encodeURIComponent).join('/');
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
+}
+
+function currentPreviewBg() {
+  return getComputedStyle(document.documentElement).getPropertyValue('--preview-bg').trim() || '#ffffff';
+}
+
+function renderFramePreview(path) {
+  const main = document.getElementById('main');
+  main.innerHTML = '';
+  main.style.padding = '0';
+
+  const iframe = document.createElement('iframe');
+  iframe.src = rawFileUrl(path);
+  iframe.style.cssText = `width:100%;height:calc(100vh - 44px);border:none;display:block;background:${currentPreviewBg()};`;
+  iframe.addEventListener('load', () => {
+    try {
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+      doc.documentElement.style.background = currentPreviewBg();
+      if (doc.body) {
+        doc.body.style.background = currentPreviewBg();
+        doc.body.style.colorScheme = html.dataset.theme === 'dark' ? 'dark' : 'light';
+      }
+    } catch {
+      // Browser plugins and some documents may not expose a DOM.
+    }
+  });
+
+  main.appendChild(iframe);
 }
 
 // ── marked 配置 ───────────────────────────────────────
@@ -281,6 +347,14 @@ marked.use({
 // ── 文件树渲染 ────────────────────────────────────────
 let activePath = null;
 let currentRoot = '';
+let fileInfoByPath = new Map();
+
+function indexFiles(nodes) {
+  nodes.forEach(node => {
+    if (node.type === 'dir') indexFiles(node.children || []);
+    else fileInfoByPath.set(node.path, node);
+  });
+}
 
 function normalizePath(path) {
   const parts = [];
@@ -311,7 +385,7 @@ function renderTree(nodes, container, depth = 0) {
       const row = document.createElement('div');
       row.className = 'ti';
       row.style.paddingLeft = pad;
-      row.innerHTML = `<span class="arr">▶</span><span class="ic">📁</span><span class="nm">${node.name}</span>`;
+      row.innerHTML = `<span class="arr">▶</span><span class="ic">📁</span><span class="nm">${escapeHtml(node.name)}</span>`;
 
       const kids = document.createElement('div');
       kids.className = 'tc';
@@ -328,8 +402,9 @@ function renderTree(nodes, container, depth = 0) {
       const row = document.createElement('div');
       row.className = 'ti';
       row.dataset.path = node.path;
+      row.title = `${node.path} - ${previewLabel(node)}`;
       row.style.paddingLeft = pad;
-      row.innerHTML = `<span class="arr"></span><span class="ic">${fileIcon(ext)}</span><span class="nm">${node.name}</span>`;
+      row.innerHTML = `<span class="arr"></span><span class="ic">${fileIcon(node.previewKind, ext)}</span><span class="nm">${escapeHtml(node.name)}</span><span class="badge ${node.previewable ? '' : 'no'}">${escapeHtml(previewLabel(node))}</span>`;
       row.addEventListener('click', () => loadFile(node.path));
       container.appendChild(row);
     }
@@ -362,26 +437,54 @@ async function loadFile(path) {
   document.getElementById('main').style.padding = '';  // 重置（可能被 iframe 清空过）
   setActive(path);
 
-  const kind = fileKind(path);
+  const info = fileInfoByPath.get(path) || { previewable: true, previewKind: 'text', ext: path.split('.').pop().toLowerCase() };
+  const kind = info.previewKind;
+
+  if (!info.previewable) {
+    document.getElementById('main').innerHTML = `
+      <div class="msg">
+        <span>该文件已列出，但当前不能预览内容。</span>
+        <code>${path}</code>
+      </div>`;
+    return;
+  }
 
   // 图片：直接用 URL，不走 API
   if (kind === 'image') {
     document.getElementById('main').innerHTML = `
       <div class="imgview">
-        <img src="${rawFileUrl(path)}" alt="${path}">
-        <div class="caption">${path}</div>
+        <img src="${rawFileUrl(path)}" alt="${escapeHtml(path)}">
+        <div class="caption">${escapeHtml(path)}</div>
       </div>`;
     return;
   }
 
   // HTML：iframe 渲染
+  if (kind === 'audio') {
+    document.getElementById('main').innerHTML = `
+      <div class="imgview">
+        <audio src="${rawFileUrl(path)}" controls style="width:100%"></audio>
+        <div class="caption">${escapeHtml(path)}</div>
+      </div>`;
+    return;
+  }
+
+  if (kind === 'video') {
+    document.getElementById('main').innerHTML = `
+      <div class="imgview">
+        <video src="${rawFileUrl(path)}" controls style="max-width:100%;max-height:70vh;border:1px solid var(--border);border-radius:6px"></video>
+        <div class="caption">${escapeHtml(path)}</div>
+      </div>`;
+    return;
+  }
+
+  if (kind === 'pdf') {
+    renderFramePreview(path);
+    return;
+  }
+
   if (kind === 'html') {
-    document.getElementById('main').innerHTML = '';
-    const iframe = document.createElement('iframe');
-    iframe.src = rawFileUrl(path);
-    iframe.style.cssText = 'width:100%;height:calc(100vh - 44px);border:none;display:block;';
-    document.getElementById('main').style.padding = '0';
-    document.getElementById('main').appendChild(iframe);
+    renderFramePreview(path);
     return;
   }
 
@@ -389,8 +492,8 @@ async function loadFile(path) {
   try {
     const res = await fetch(`/api/file?path=${encodeURIComponent(path)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const { content, ext } = await res.json();
-    renderContent(kind, content, path, ext);
+    const { content, ext, kind: detectedKind, truncated } = await res.json();
+    renderContent(detectedKind || kind, content, path, ext, truncated);
   } catch (e) {
     document.getElementById('main').innerHTML =
       `<div class="msg"><span>读取失败：${e.message}</span></div>`;
@@ -403,8 +506,9 @@ function updateHeaderPath(path = '') {
   document.getElementById('hpath').title = display;
 }
 
-function renderContent(kind, content, path, ext) {
+function renderContent(kind, content, path, ext, truncated = false) {
   const main = document.getElementById('main');
+  const truncatedNote = truncated ? '<div class="caption">文件较大，只显示前 2 MB。</div>' : '';
 
   if (kind === 'markdown') {
     const div = document.createElement('div');
@@ -426,7 +530,7 @@ function renderContent(kind, content, path, ext) {
     main.innerHTML = `
       <div class="svgview">
         ${content}
-        <div class="caption">${path}</div>
+        <div class="caption">${escapeHtml(path)}</div>
       </div>`;
 
   } else if (kind === 'text') {
@@ -435,6 +539,12 @@ function renderContent(kind, content, path, ext) {
     const pre = document.createElement('pre');
     pre.textContent = content;
     div.appendChild(pre);
+    if (truncated) {
+      const note = document.createElement('div');
+      note.className = 'caption';
+      note.textContent = '文件较大，只显示前 2 MB。';
+      div.appendChild(note);
+    }
     main.innerHTML = '';
     main.appendChild(div);
 
@@ -447,8 +557,9 @@ function renderContent(kind, content, path, ext) {
 
     main.innerHTML = `
       <div class="codefile">
-        <div class="codefile-header">${path}</div>
+        <div class="codefile-header">${escapeHtml(path)}</div>
         <pre><code class="hljs">${highlighted}</code></pre>
+        ${truncatedNote}
       </div>`;
   }
 }
@@ -476,6 +587,8 @@ async function loadTree() {
     const sidebar = document.getElementById('sidebar');
     sidebar.innerHTML = '';
     currentRoot = tree.root || '';
+    fileInfoByPath = new Map();
+    indexFiles(tree.items || []);
     renderTree(tree.items || [], sidebar);
     updateHeaderPath(activePath);
     if (activePath) {
@@ -521,6 +634,8 @@ document.getElementById('open-folder-btn').addEventListener('click', async () =>
       activePath = null;
       const sidebar = document.getElementById('sidebar');
       sidebar.innerHTML = '';
+      fileInfoByPath = new Map();
+      indexFiles(data.items || []);
       renderTree(data.items || [], sidebar);
       document.getElementById('main').innerHTML =
         '<div class="msg"><span>文件夹已切换，请从左侧选择文件</span></div>';
