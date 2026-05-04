@@ -223,6 +223,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             rel = urllib.parse.unquote(parsed.path[len('/root/'):])
             self._serve_raw(rel)
 
+        elif parsed.path == '/api/tracker/data':
+            self._serve_tracker_data()
+
         else:
             super().do_GET()
 
@@ -342,6 +345,40 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return full
         except (ValueError, Exception):
             return None
+
+    def _find_tracker_data_dir(self):
+        root = get_current_root()
+        tracker_dir_name = '\u6295\u8d44\u8ddf\u8e2a'
+        candidates = [
+            root / 'projects' / tracker_dir_name / 'data',
+            root / tracker_dir_name / 'data',
+            root / 'data',
+        ]
+        for data_dir in candidates:
+            try:
+                resolved = data_dir.resolve()
+                resolved.relative_to(root)
+            except (ValueError, OSError):
+                continue
+            if resolved.is_dir():
+                return resolved
+        return None
+
+    def _serve_tracker_data(self):
+        data_dir = self._find_tracker_data_dir()
+        if data_dir is None:
+            self.send_error(404, 'Tracker data directory not found')
+            return
+
+        try:
+            sources = json.loads((data_dir / 'sources.json').read_text(encoding='utf-8'))
+            signals = json.loads((data_dir / 'signals.json').read_text(encoding='utf-8'))
+            trades = json.loads((data_dir / 'trades.json').read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError) as exc:
+            self.send_error(500, f'Failed to read tracker data: {exc}')
+            return
+
+        self._send_json({**sources, **signals, **trades})
 
     def _send_html(self, path: Path):
         if not path.exists():
