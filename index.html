@@ -96,6 +96,13 @@ aside::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; 
   color: var(--text-dim); background: var(--bg);
 }
 .ti .badge.no { opacity: 0.75; }
+.ti.root { color: var(--text-hi); font-weight: 600; }
+.ti.root .close-root {
+  flex-shrink: 0; width: 20px; height: 20px; border: 1px solid transparent;
+  border-radius: 4px; background: transparent; color: var(--text-dim);
+  cursor: pointer; line-height: 18px; font-size: 0.85rem;
+}
+.ti.root .close-root:hover { border-color: var(--border); color: var(--text-hi); background: var(--bg); }
 .tc { display: none; }
 .tc.open { display: block; }
 
@@ -279,8 +286,8 @@ function previewLabel(node) {
   return labels[node.previewKind] || '可预览';
 }
 
-function rawFileUrl(path) {
-  return '/root/' + path.split('/').map(encodeURIComponent).join('/');
+function rawFileUrl(rootId, path) {
+  return '/root/' + encodeURIComponent(rootId) + '/' + path.split('/').map(encodeURIComponent).join('/');
 }
 
 function escapeHtml(value) {
@@ -297,13 +304,13 @@ function currentPreviewBg() {
   return getComputedStyle(document.documentElement).getPropertyValue('--preview-bg').trim() || '#ffffff';
 }
 
-function renderFramePreview(path) {
+function renderFramePreview(rootId, path) {
   const main = document.getElementById('main');
   main.innerHTML = '';
   main.style.padding = '0';
 
   const iframe = document.createElement('iframe');
-  iframe.src = rawFileUrl(path);
+  iframe.src = rawFileUrl(rootId, path);
   iframe.style.cssText = `width:100%;height:calc(100vh - 44px);border:none;display:block;background:${currentPreviewBg()};`;
   iframe.addEventListener('load', () => {
     try {
@@ -345,15 +352,23 @@ marked.use({
 });
 
 // ── 文件树渲染 ────────────────────────────────────────
-let activePath = null;
-let currentRoot = '';
-let fileInfoByPath = new Map();
+let roots = [];
+let activeFile = null;
+let fileInfoByKey = new Map();
 
-function indexFiles(nodes) {
+function fileKey(rootId, path) {
+  return `${rootId}:${path}`;
+}
+
+function indexFiles(rootId, nodes) {
   nodes.forEach(node => {
-    if (node.type === 'dir') indexFiles(node.children || []);
-    else fileInfoByPath.set(node.path, node);
+    if (node.type === 'dir') indexFiles(rootId, node.children || []);
+    else fileInfoByKey.set(fileKey(rootId, node.path), { ...node, rootId });
   });
+}
+
+function findRoot(rootId) {
+  return roots.find(root => root.id === rootId) || null;
 }
 
 function normalizePath(path) {
@@ -378,9 +393,9 @@ function resolveRelativePath(fromPath, targetPath) {
   return normalizePath([...baseParts, targetPath].join('/'));
 }
 
-function renderTree(nodes, container, depth = 0) {
+function renderTree(root, nodes, container, depth = 0) {
   nodes.forEach(node => {
-    const pad = `${0.75 + depth * 0.875}rem`;
+    const pad = `${1.25 + depth * 0.875}rem`;
     if (node.type === 'dir') {
       const row = document.createElement('div');
       row.className = 'ti';
@@ -389,7 +404,7 @@ function renderTree(nodes, container, depth = 0) {
 
       const kids = document.createElement('div');
       kids.className = 'tc';
-      renderTree(node.children, kids, depth + 1);
+      renderTree(root, node.children || [], kids, depth + 1);
 
       row.addEventListener('click', () => {
         const open = kids.classList.toggle('open');
@@ -401,27 +416,59 @@ function renderTree(nodes, container, depth = 0) {
       const ext = node.ext || node.name.split('.').pop().toLowerCase();
       const row = document.createElement('div');
       row.className = 'ti';
+      row.dataset.root = root.id;
       row.dataset.path = node.path;
-      row.title = `${node.path} - ${previewLabel(node)}`;
+      row.title = `${root.path} / ${node.path} - ${previewLabel(node)}`;
       row.style.paddingLeft = pad;
       row.innerHTML = `<span class="arr"></span><span class="ic">${fileIcon(node.previewKind, ext)}</span><span class="nm">${escapeHtml(node.name)}</span><span class="badge ${node.previewable ? '' : 'no'}">${escapeHtml(previewLabel(node))}</span>`;
-      row.addEventListener('click', () => loadFile(node.path));
+      row.addEventListener('click', () => loadFile(root.id, node.path));
       container.appendChild(row);
     }
   });
 }
 
-function setActive(path) {
+function renderRoot(root, container) {
+  const row = document.createElement('div');
+  row.className = 'ti root';
+  row.dataset.rootHeader = root.id;
+  row.title = root.path;
+  row.innerHTML = `
+    <span class="arr">▼</span>
+    <span class="ic">📁</span>
+    <span class="nm">${escapeHtml(root.name)}</span>
+    <button class="close-root" title="Close folder" aria-label="Close folder">×</button>`;
+
+  const kids = document.createElement('div');
+  kids.className = 'tc open';
+  renderTree(root, root.items || [], kids, 0);
+
+  row.addEventListener('click', () => {
+    const open = kids.classList.toggle('open');
+    row.querySelector('.arr').textContent = open ? '▼' : '▶';
+  });
+  row.querySelector('.close-root').addEventListener('click', (event) => {
+    event.stopPropagation();
+    removeRoot(root.id);
+  });
+
+  container.appendChild(row);
+  container.appendChild(kids);
+}
+
+function setActive(file) {
   document.querySelectorAll('.ti[data-path]').forEach(el => {
-    el.classList.toggle('active', el.dataset.path === path);
-    if (el.dataset.path === path) {
-      // 展开所有父级
+    const isActive = file && el.dataset.root === file.rootId && el.dataset.path === file.path;
+    el.classList.toggle('active', isActive);
+    if (isActive) {
       let p = el.parentElement;
       while (p && p.id !== 'sidebar') {
         if (p.classList.contains('tc')) {
           p.classList.add('open');
           const prev = p.previousElementSibling;
-          if (prev) { const a = prev.querySelector('.arr'); if (a) a.textContent = '▼'; }
+          if (prev) {
+            const a = prev.querySelector('.arr');
+            if (a) a.textContent = '▼';
+          }
         }
         p = p.parentElement;
       }
@@ -429,41 +476,38 @@ function setActive(path) {
   });
 }
 
-// ── 文件加载与渲染 ────────────────────────────────────
-async function loadFile(path) {
-  activePath = path;
-  updateHeaderPath(path);
-  document.getElementById('main').innerHTML = '<div class="msg"><span>加载中…</span></div>';
-  document.getElementById('main').style.padding = '';  // 重置（可能被 iframe 清空过）
-  setActive(path);
+async function loadFile(rootId, path) {
+  activeFile = { rootId, path };
+  updateHeaderPath(activeFile);
+  document.getElementById('main').innerHTML = '<div class="msg"><span>Loading...</span></div>';
+  document.getElementById('main').style.padding = '';
+  setActive(activeFile);
 
-  const info = fileInfoByPath.get(path) || { previewable: true, previewKind: 'text', ext: path.split('.').pop().toLowerCase() };
+  const info = fileInfoByKey.get(fileKey(rootId, path)) || { previewable: true, previewKind: 'text', ext: path.split('.').pop().toLowerCase() };
   const kind = info.previewKind;
 
   if (!info.previewable) {
     document.getElementById('main').innerHTML = `
       <div class="msg">
-        <span>该文件已列出，但当前不能预览内容。</span>
-        <code>${path}</code>
+        <span>This file is listed, but cannot be previewed.</span>
+        <code>${escapeHtml(path)}</code>
       </div>`;
     return;
   }
 
-  // 图片：直接用 URL，不走 API
   if (kind === 'image') {
     document.getElementById('main').innerHTML = `
       <div class="imgview">
-        <img src="${rawFileUrl(path)}" alt="${escapeHtml(path)}">
+        <img src="${rawFileUrl(rootId, path)}" alt="${escapeHtml(path)}">
         <div class="caption">${escapeHtml(path)}</div>
       </div>`;
     return;
   }
 
-  // HTML：iframe 渲染
   if (kind === 'audio') {
     document.getElementById('main').innerHTML = `
       <div class="imgview">
-        <audio src="${rawFileUrl(path)}" controls style="width:100%"></audio>
+        <audio src="${rawFileUrl(rootId, path)}" controls style="width:100%"></audio>
         <div class="caption">${escapeHtml(path)}</div>
       </div>`;
     return;
@@ -472,43 +516,38 @@ async function loadFile(path) {
   if (kind === 'video') {
     document.getElementById('main').innerHTML = `
       <div class="imgview">
-        <video src="${rawFileUrl(path)}" controls style="max-width:100%;max-height:70vh;border:1px solid var(--border);border-radius:6px"></video>
+        <video src="${rawFileUrl(rootId, path)}" controls style="max-width:100%;max-height:70vh;border:1px solid var(--border);border-radius:6px"></video>
         <div class="caption">${escapeHtml(path)}</div>
       </div>`;
     return;
   }
 
-  if (kind === 'pdf') {
-    renderFramePreview(path);
+  if (kind === 'pdf' || kind === 'html') {
+    renderFramePreview(rootId, path);
     return;
   }
 
-  if (kind === 'html') {
-    renderFramePreview(path);
-    return;
-  }
-
-  // 文本类文件：走 /api/file
   try {
-    const res = await fetch(`/api/file?path=${encodeURIComponent(path)}`);
+    const res = await fetch(`/api/file?root=${encodeURIComponent(rootId)}&path=${encodeURIComponent(path)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const { content, ext, kind: detectedKind, truncated } = await res.json();
-    renderContent(detectedKind || kind, content, path, ext, truncated);
+    renderContent(rootId, detectedKind || kind, content, path, ext, truncated);
   } catch (e) {
     document.getElementById('main').innerHTML =
-      `<div class="msg"><span>读取失败：${e.message}</span></div>`;
+      `<div class="msg"><span>Read failed: ${escapeHtml(e.message)}</span></div>`;
   }
 }
 
-function updateHeaderPath(path = '') {
-  const display = path ? (currentRoot ? `${currentRoot} / ${path}` : path) : (currentRoot || '—');
+function updateHeaderPath(file = null) {
+  const root = file ? findRoot(file.rootId) : null;
+  const display = file && root ? `${root.path} / ${file.path}` : (roots.length ? `${roots.length} folder(s) open` : 'No folders open');
   document.getElementById('hpath').textContent = display;
   document.getElementById('hpath').title = display;
 }
 
-function renderContent(kind, content, path, ext, truncated = false) {
+function renderContent(rootId, kind, content, path, ext, truncated = false) {
   const main = document.getElementById('main');
-  const truncatedNote = truncated ? '<div class="caption">文件较大，只显示前 2 MB。</div>' : '';
+  const truncatedNote = truncated ? '<div class="caption">Large file, showing first 2 MB only.</div>' : '';
 
   if (kind === 'markdown') {
     const div = document.createElement('div');
@@ -520,7 +559,7 @@ function renderContent(kind, content, path, ext, truncated = false) {
       if (!href) return;
       a.addEventListener('click', (e) => {
         e.preventDefault();
-        loadFile(resolveRelativePath(path, href));
+        loadFile(rootId, resolveRelativePath(path, href));
       });
     });
     main.innerHTML = '';
@@ -542,14 +581,13 @@ function renderContent(kind, content, path, ext, truncated = false) {
     if (truncated) {
       const note = document.createElement('div');
       note.className = 'caption';
-      note.textContent = '文件较大，只显示前 2 MB。';
+      note.textContent = 'Large file, showing first 2 MB only.';
       div.appendChild(note);
     }
     main.innerHTML = '';
     main.appendChild(div);
 
   } else {
-    // 代码文件
     const lang = EXT_LANG[ext] || 'plaintext';
     const highlighted = hljs.getLanguage(lang)
       ? hljs.highlight(content, { language: lang }).value
@@ -564,54 +602,78 @@ function renderContent(kind, content, path, ext, truncated = false) {
   }
 }
 
-// ── 初始化 ────────────────────────────────────────────
-async function init() {
-  if (location.protocol === 'file:') {
-    document.getElementById('main').innerHTML = `
-      <div class="msg">
-        <span>请先启动本地服务器</span>
-        <code>双击 start.bat</code>
-      </div>`;
-    return;
-  }
+function setTreeData(nextRoots) {
+  roots = nextRoots || [];
+  fileInfoByKey = new Map();
+  roots.forEach(root => indexFiles(root.id, root.items || []));
 
-  await loadTree();
-  if (activePath) {
-    loadFile(activePath);
+  const sidebar = document.getElementById('sidebar');
+  sidebar.innerHTML = '';
+  roots.forEach(root => renderRoot(root, sidebar));
+}
+
+function findDefaultFile() {
+  for (const root of roots) {
+    const direct = (root.items || []).find(node => node.type === 'file' && ['README.md', 'index.md'].includes(node.path));
+    if (direct) return { rootId: root.id, path: direct.path };
   }
+  return null;
 }
 
 async function loadTree() {
   try {
     const tree = await fetch('/api/tree').then(r => r.json());
-    const sidebar = document.getElementById('sidebar');
-    sidebar.innerHTML = '';
-    currentRoot = tree.root || '';
-    fileInfoByPath = new Map();
-    indexFiles(tree.items || []);
-    renderTree(tree.items || [], sidebar);
-    updateHeaderPath(activePath);
-    if (activePath) {
-      const exists = sidebar.querySelector(`[data-path="${CSS.escape(activePath)}"]`);
-      if (exists) setActive(activePath);
-      else {
-        activePath = null;
-        document.getElementById('main').innerHTML =
-          '<div class="msg"><span>请选择左侧文件开始浏览</span></div>';
-      }
-    } else {
-      const defaultFile = (tree.items || []).find(node => node.type === 'file' && ['README.md', 'index.md'].includes(node.path));
-      if (defaultFile) {
-        loadFile(defaultFile.path);
-      } else {
-        document.getElementById('main').innerHTML =
-          '<div class="msg"><span>请选择左侧文件开始浏览</span></div>';
-      }
+    setTreeData(tree.roots || []);
+    updateHeaderPath(activeFile);
+
+    if (activeFile) {
+      const selector = `.ti[data-root="${CSS.escape(activeFile.rootId)}"][data-path="${CSS.escape(activeFile.path)}"]`;
+      if (document.querySelector(selector)) setActive(activeFile);
+      else activeFile = null;
     }
-  } catch {
+
+    if (!activeFile) {
+      const defaultFile = findDefaultFile();
+      if (defaultFile) loadFile(defaultFile.rootId, defaultFile.path);
+      else document.getElementById('main').innerHTML = '<div class="msg"><span>Select a file from the left.</span></div>';
+    }
+  } catch (e) {
     document.getElementById('sidebar').innerHTML =
-      `<div style="padding:1rem;color:var(--text-dim);font-size:0.8rem">加载失败</div>`;
+      `<div style="padding:1rem;color:var(--text-dim);font-size:0.8rem">Load failed: ${escapeHtml(e.message)}</div>`;
   }
+}
+
+async function removeRoot(rootId) {
+  const root = findRoot(rootId);
+  if (!root) return;
+  try {
+    const res = await fetch('/api/remove-root', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root: rootId }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (activeFile && activeFile.rootId === rootId) activeFile = null;
+    setTreeData(data.roots || []);
+    updateHeaderPath(activeFile);
+    if (!activeFile) document.getElementById('main').innerHTML = '<div class="msg"><span>Folder closed. Select another file.</span></div>';
+  } catch (e) {
+    document.getElementById('main').innerHTML = `<div class="msg"><span>Close folder failed: ${escapeHtml(e.message)}</span></div>`;
+  }
+}
+
+async function init() {
+  if (location.protocol === 'file:') {
+    document.getElementById('main').innerHTML = `
+      <div class="msg">
+        <span>Please start the local server first.</span>
+        <code>start.bat</code>
+      </div>`;
+    return;
+  }
+
+  await loadTree();
 }
 
 document.getElementById('refresh-btn').addEventListener('click', async () => {
@@ -624,28 +686,21 @@ document.getElementById('refresh-btn').addEventListener('click', async () => {
 document.getElementById('open-folder-btn').addEventListener('click', async () => {
   const btn = document.getElementById('open-folder-btn');
   btn.disabled = true;
-  btn.textContent = '选择中...';
+  btn.textContent = 'Choosing...';
   try {
     const res = await fetch('/api/select-root', { method: 'POST' });
     const data = await res.json();
-    if (data.root) currentRoot = data.root;
-    updateHeaderPath(activePath);
     if (data.ok) {
-      activePath = null;
-      const sidebar = document.getElementById('sidebar');
-      sidebar.innerHTML = '';
-      fileInfoByPath = new Map();
-      indexFiles(data.items || []);
-      renderTree(data.items || [], sidebar);
-      document.getElementById('main').innerHTML =
-        '<div class="msg"><span>文件夹已切换，请从左侧选择文件</span></div>';
+      setTreeData(data.roots || []);
+      updateHeaderPath(activeFile);
+      document.getElementById('main').innerHTML = '<div class="msg"><span>Folder added. Select a file from the left.</span></div>';
     } else if (!data.cancelled) {
       document.getElementById('main').innerHTML =
-        `<div class="msg"><span>打开文件夹失败：${data.error || '未知错误'}</span></div>`;
+        `<div class="msg"><span>Open folder failed: ${escapeHtml(data.error || 'Unknown error')}</span></div>`;
     }
   } catch (e) {
     document.getElementById('main').innerHTML =
-      `<div class="msg"><span>打开文件夹失败：${e.message}</span></div>`;
+      `<div class="msg"><span>Open folder failed: ${escapeHtml(e.message)}</span></div>`;
   } finally {
     btn.disabled = false;
     btn.textContent = '打开文件夹';

@@ -5,6 +5,7 @@ LocalBrowse 本地文件浏览服务器
 """
 
 import http.server
+import hashlib
 import json
 import mimetypes
 import os
@@ -23,8 +24,12 @@ except Exception:  # pragma: no cover - tkinter may be unavailable on some syste
     filedialog = None
 
 BASE_DIR = Path(__file__).parent.resolve()
-START_ROOT = Path(sys.argv[1]).expanduser().resolve() if len(sys.argv) > 1 else BASE_DIR
-CURRENT_ROOT = START_ROOT if START_ROOT.is_dir() else BASE_DIR
+HAS_START_ARG = len(sys.argv) > 1
+START_ROOT = Path(sys.argv[1]).expanduser().resolve() if HAS_START_ARG else BASE_DIR
+CONFIG_DIR = Path(os.environ.get('LOCALBROWSE_CONFIG_DIR', Path.home() / '.localbrowse'))
+ROOTS_FILE = CONFIG_DIR / 'roots.json'
+DEFAULT_ROOT = START_ROOT if START_ROOT.is_dir() else BASE_DIR
+OPEN_ROOTS = []
 ROOT_LOCK = Lock()
 
 EXCLUDE = {'.git', '.claude', '__pycache__', 'node_modules', '.vscode', '.idea'}
@@ -146,15 +151,94 @@ def classify_file(path: Path):
     return {'previewable': True, 'previewKind': kind, 'mime': mime}
 
 
+def root_id(path: Path) -> str:
+    return hashlib.sha1(str(path).lower().encode('utf-8')).hexdigest()[:12]
+
+
+def root_payload(path: Path):
+    return {
+        'id': root_id(path),
+        'name': path.name or str(path),
+        'path': str(path),
+    }
+
+
+def load_open_roots():
+    roots = []
+    try:
+        raw = json.loads(ROOTS_FILE.read_text(encoding='utf-8'))
+        paths = raw.get('roots', []) if isinstance(raw, dict) else []
+    except (OSError, json.JSONDecodeError):
+        paths = []
+
+    for value in paths:
+        try:
+            path = Path(value).expanduser().resolve()
+        except (OSError, RuntimeError):
+            continue
+        if path.is_dir() and all(existing != path for existing in roots):
+            roots.append(path)
+
+    if (HAS_START_ARG or not roots) and DEFAULT_ROOT.is_dir() and all(existing != DEFAULT_ROOT for existing in roots):
+        roots.insert(0, DEFAULT_ROOT)
+
+    return roots or [BASE_DIR]
+
+
+def save_open_roots() -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with ROOT_LOCK:
+        paths = [str(path) for path in OPEN_ROOTS]
+    ROOTS_FILE.write_text(json.dumps({'roots': paths}, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+OPEN_ROOTS = load_open_roots()
+
+
+def get_open_roots():
+    with ROOT_LOCK:
+        return list(OPEN_ROOTS)
+
+
 def get_current_root() -> Path:
     with ROOT_LOCK:
-        return CURRENT_ROOT
+        return OPEN_ROOTS[0] if OPEN_ROOTS else BASE_DIR
 
 
-def set_current_root(path: Path) -> None:
-    global CURRENT_ROOT
+def add_open_root(path: Path) -> Path:
     with ROOT_LOCK:
-        CURRENT_ROOT = path
+        if all(existing != path for existing in OPEN_ROOTS):
+            OPEN_ROOTS.append(path)
+    save_open_roots()
+    return path
+
+
+def remove_open_root(root_id_value: str) -> bool:
+    removed = False
+    with ROOT_LOCK:
+        kept = []
+        for path in OPEN_ROOTS:
+            if root_id(path) == root_id_value:
+                removed = True
+            else:
+                kept.append(path)
+        if removed:
+            OPEN_ROOTS[:] = kept
+    if removed:
+        save_open_roots()
+    return removed
+
+
+def find_open_root(root_id_value=None):
+    roots = get_open_roots()
+    if not roots:
+        return None
+    if not root_id_value:
+        return roots[0]
+    for root in roots:
+        if root_id(root) == root_id_value:
+            return root
+    return None
 
 
 def build_tree(path: Path, rel: Path = Path('.')):
@@ -200,28 +284,36 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
 
         if parsed.path == '/api/tree':
-            root = get_current_root()
             self._send_json({
-                'root': str(root),
-                'items': build_tree(root),
+                'roots': self._build_roots_payload(),
             })
 
         elif parsed.path == '/api/file':
             params = urllib.parse.parse_qs(parsed.query)
+            root_id_value = params.get('root', [''])[0]
             rel = params.get('path', [''])[0]
-            self._serve_text(rel)
+            self._serve_text(root_id_value, rel)
 
         elif parsed.path == '/api/current-root':
-            self._send_json({'root': str(get_current_root())})
+            roots = get_open_roots()
+            self._send_json({
+                'root': str(roots[0]) if roots else '',
+                'roots': [root_payload(root) for root in roots],
+            })
 
         elif parsed.path == '/api/raw':
             params = urllib.parse.parse_qs(parsed.query)
+            root_id_value = params.get('root', [''])[0]
             rel = params.get('path', [''])[0]
-            self._serve_raw(rel)
+            self._serve_raw(root_id_value, rel)
 
         elif parsed.path.startswith('/root/'):
-            rel = urllib.parse.unquote(parsed.path[len('/root/'):])
-            self._serve_raw(rel)
+            rest = urllib.parse.unquote(parsed.path[len('/root/'):])
+            root_id_value, sep, rel = rest.partition('/')
+            if sep:
+                self._serve_raw(root_id_value, rel)
+            else:
+                self._serve_raw('', root_id_value)
 
         elif parsed.path == '/api/tracker/data':
             self._serve_tracker_data()
@@ -236,10 +328,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._select_root()
             return
 
+        if parsed.path == '/api/remove-root':
+            self._remove_root()
+            return
+
         self.send_error(404)
 
-    def _serve_text(self, rel_path):
-        full = self._resolve_in_root(rel_path)
+    def _build_roots_payload(self):
+        roots = []
+        for root in get_open_roots():
+            data = root_payload(root)
+            try:
+                data['items'] = build_tree(root)
+            except OSError as exc:
+                data['items'] = []
+                data['error'] = str(exc)
+            roots.append(data)
+        return roots
+
+    def _serve_text(self, root_id_value, rel_path):
+        full = self._resolve_in_root(root_id_value, rel_path)
         if full is None:
             self.send_error(403)
             return
@@ -267,14 +375,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._send_json({
             'content': content,
             'path': rel_path,
+            'root': root_id_value or root_id(get_current_root()),
             'ext': file_ext(full),
             'kind': info['previewKind'],
             'encoding': encoding,
             'truncated': truncated,
         })
 
-    def _serve_raw(self, rel_path):
-        full = self._resolve_in_root(rel_path)
+    def _serve_raw(self, root_id_value, rel_path):
+        full = self._resolve_in_root(root_id_value, rel_path)
         if full is None:
             self.send_error(403)
             return
@@ -302,22 +411,42 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json({
                 'ok': False,
                 'error': 'tkinter unavailable',
-                'root': str(get_current_root()),
+                'roots': self._build_roots_payload(),
             })
             return
 
         selected = self._ask_directory()
         if not selected:
-            self._send_json({'ok': False, 'cancelled': True, 'root': str(get_current_root())})
+            self._send_json({'ok': False, 'cancelled': True, 'roots': self._build_roots_payload()})
             return
 
         root = Path(selected).resolve()
         if not root.is_dir():
-            self._send_json({'ok': False, 'error': 'invalid directory', 'root': str(get_current_root())})
+            self._send_json({'ok': False, 'error': 'invalid directory', 'roots': self._build_roots_payload()})
             return
 
-        set_current_root(root)
-        self._send_json({'ok': True, 'root': str(root), 'items': build_tree(root)})
+        add_open_root(root)
+        self._send_json({'ok': True, 'root': root_payload(root), 'roots': self._build_roots_payload()})
+
+    def _remove_root(self):
+        try:
+            length = int(self.headers.get('Content-Length', '0') or '0')
+            body = self.rfile.read(length) if length else b'{}'
+            data = json.loads(body.decode('utf-8') or '{}')
+        except (ValueError, json.JSONDecodeError):
+            self.send_error(400, 'Invalid JSON')
+            return
+
+        root_id_value = str(data.get('root') or '')
+        if not root_id_value:
+            self.send_error(400, 'Missing root id')
+            return
+
+        if not remove_open_root(root_id_value):
+            self.send_error(400, 'Cannot remove root')
+            return
+
+        self._send_json({'ok': True, 'roots': self._build_roots_payload()})
 
     def _ask_directory(self):
         holder = {}
@@ -337,9 +466,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         choose()
         return holder.get('path', '')
 
-    def _resolve_in_root(self, rel_path):
+    def _resolve_in_root(self, root_id_value, rel_path):
         try:
-            root = get_current_root()
+            root = find_open_root(root_id_value)
+            if root is None:
+                return None
             full = (root / rel_path).resolve()
             full.relative_to(root)
             return full
@@ -347,21 +478,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return None
 
     def _find_tracker_data_dir(self):
-        root = get_current_root()
         tracker_dir_name = '\u6295\u8d44\u8ddf\u8e2a'
-        candidates = [
-            root / 'projects' / tracker_dir_name / 'data',
-            root / tracker_dir_name / 'data',
-            root / 'data',
-        ]
-        for data_dir in candidates:
-            try:
-                resolved = data_dir.resolve()
-                resolved.relative_to(root)
-            except (ValueError, OSError):
-                continue
-            if resolved.is_dir():
-                return resolved
+        for root in get_open_roots():
+            candidates = [
+                root / 'projects' / tracker_dir_name / 'data',
+                root / tracker_dir_name / 'data',
+                root / 'data',
+            ]
+            for data_dir in candidates:
+                try:
+                    resolved = data_dir.resolve()
+                    resolved.relative_to(root)
+                except (ValueError, OSError):
+                    continue
+                if resolved.is_dir():
+                    return resolved
         return None
 
     def _serve_tracker_data(self):
