@@ -65,6 +65,10 @@ AUDIO_MAGIC = (
 VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov', '.m4v'}
 AUDIO_EXTS = {'.mp3', '.wav', '.ogg', '.flac', '.m4a'}
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.avif'}
+SVG_EXTS = {'.svg'}
+PDF_EXTS = {'.pdf'}
+HTML_EXTS = {'.html', '.htm'}
+MARKDOWN_EXTS = {'.md'}
 
 
 def file_ext(path: Path) -> str:
@@ -149,6 +153,29 @@ def classify_file(path: Path):
         mime = 'text/plain'
 
     return {'previewable': True, 'previewKind': kind, 'mime': mime}
+
+
+def classify_file_for_listing(path: Path):
+    ext = path.suffix.lower()
+    lower_name = path.name.lower()
+
+    if ext in MARKDOWN_EXTS:
+        return {'previewable': True, 'previewKind': 'markdown', 'mime': 'text/markdown'}
+    if ext in HTML_EXTS:
+        return {'previewable': True, 'previewKind': 'html', 'mime': 'text/html'}
+    if ext in SVG_EXTS:
+        return {'previewable': True, 'previewKind': 'svg', 'mime': 'image/svg+xml'}
+    if ext in PDF_EXTS:
+        return {'previewable': True, 'previewKind': 'pdf', 'mime': 'application/pdf'}
+    if ext in IMAGE_EXTS:
+        return {'previewable': True, 'previewKind': 'image', 'mime': mimetypes.guess_type(path.name)[0] or 'image/*'}
+    if ext in AUDIO_EXTS:
+        return {'previewable': True, 'previewKind': 'audio', 'mime': mimetypes.guess_type(path.name)[0] or 'audio/*'}
+    if ext in VIDEO_EXTS:
+        return {'previewable': True, 'previewKind': 'video', 'mime': mimetypes.guess_type(path.name)[0] or 'video/*'}
+    if ext in CODE_EXTS or lower_name in TEXT_NAMES:
+        return {'previewable': True, 'previewKind': 'code', 'mime': 'text/plain'}
+    return {'previewable': True, 'previewKind': 'text', 'mime': 'text/plain'}
 
 
 def root_id(path: Path) -> str:
@@ -241,7 +268,7 @@ def find_open_root(root_id_value=None):
     return None
 
 
-def build_tree(path: Path, rel: Path = Path('.')):
+def build_dir(path: Path, rel: Path = Path('.')):
     result = []
     try:
         entries = sorted(path.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
@@ -256,16 +283,14 @@ def build_tree(path: Path, rel: Path = Path('.')):
             continue
         rel_entry = rel / entry.name
         if entry.is_dir():
-            children = build_tree(entry, rel_entry)
-            if children:
-                result.append({
-                    'name': entry.name,
-                    'path': str(rel_entry).replace('\\', '/'),
-                    'type': 'dir',
-                    'children': children,
-                })
+            result.append({
+                'name': entry.name,
+                'path': str(rel_entry).replace('\\', '/'),
+                'type': 'dir',
+                'loaded': False,
+            })
         elif entry.is_file():
-            preview = classify_file(entry)
+            preview = classify_file_for_listing(entry)
             result.append({
                 'name': entry.name,
                 'path': str(rel_entry).replace('\\', '/'),
@@ -287,6 +312,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json({
                 'roots': self._build_roots_payload(),
             })
+
+        elif parsed.path == '/api/dir':
+            params = urllib.parse.parse_qs(parsed.query)
+            root_id_value = params.get('root', [''])[0]
+            rel = params.get('path', [''])[0]
+            self._serve_dir(root_id_value, rel)
 
         elif parsed.path == '/api/file':
             params = urllib.parse.parse_qs(parsed.query)
@@ -318,6 +349,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif parsed.path == '/api/tracker/data':
             self._serve_tracker_data()
 
+        elif parsed.path == '/favicon.ico':
+            self.send_response(204)
+            self.end_headers()
+
         else:
             super().do_GET()
 
@@ -339,12 +374,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         for root in get_open_roots():
             data = root_payload(root)
             try:
-                data['items'] = build_tree(root)
+                data['items'] = build_dir(root)
             except OSError as exc:
                 data['items'] = []
                 data['error'] = str(exc)
             roots.append(data)
         return roots
+
+    def _serve_dir(self, root_id_value, rel_path):
+        full = self._resolve_in_root(root_id_value, rel_path)
+        if full is None:
+            self.send_error(403)
+            return
+        if not full.is_dir():
+            self.send_error(404)
+            return
+
+        try:
+            items = build_dir(full, Path(rel_path or '.'))
+        except OSError as exc:
+            self._send_json({'ok': False, 'error': str(exc), 'items': []})
+            return
+
+        self._send_json({
+            'ok': True,
+            'root': root_id_value or root_id(get_current_root()),
+            'path': rel_path,
+            'items': items,
+        })
 
     def _serve_text(self, root_id_value, rel_path):
         full = self._resolve_in_root(root_id_value, rel_path)

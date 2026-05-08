@@ -367,6 +367,11 @@ function indexFiles(rootId, nodes) {
   });
 }
 
+function indexFileNode(rootId, node) {
+  if (node.type === 'dir') indexFiles(rootId, node.children || []);
+  else fileInfoByKey.set(fileKey(rootId, node.path), { ...node, rootId });
+}
+
 function findRoot(rootId) {
   return roots.find(root => root.id === rootId) || null;
 }
@@ -393,6 +398,35 @@ function resolveRelativePath(fromPath, targetPath) {
   return normalizePath([...baseParts, targetPath].join('/'));
 }
 
+async function loadDirectory(root, node, kids, depth) {
+  if (node.loading) return;
+  node.loading = true;
+  kids.classList.add('open');
+  kids.innerHTML = `<div class="ti" style="padding-left:${1.25 + (depth + 1) * 0.875}rem"><span class="arr"></span><span class="ic">⏳</span><span class="nm">加载中...</span></div>`;
+
+  try {
+    const res = await fetch(`/api/dir?root=${encodeURIComponent(root.id)}&path=${encodeURIComponent(node.path)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Load failed');
+
+    node.children = data.items || [];
+    node.loaded = true;
+    node.children.forEach(child => indexFileNode(root.id, child));
+
+    kids.innerHTML = '';
+    if (node.children.length) {
+      renderTree(root, node.children, kids, depth + 1);
+    } else {
+      kids.innerHTML = `<div class="ti" style="padding-left:${1.25 + (depth + 1) * 0.875}rem"><span class="arr"></span><span class="ic"></span><span class="nm">空文件夹</span></div>`;
+    }
+  } catch (e) {
+    kids.innerHTML = `<div class="ti" style="padding-left:${1.25 + (depth + 1) * 0.875}rem"><span class="arr"></span><span class="ic">!</span><span class="nm">加载失败：${escapeHtml(e.message)}</span></div>`;
+  } finally {
+    node.loading = false;
+  }
+}
+
 function renderTree(root, nodes, container, depth = 0) {
   nodes.forEach(node => {
     const pad = `${1.25 + depth * 0.875}rem`;
@@ -404,11 +438,17 @@ function renderTree(root, nodes, container, depth = 0) {
 
       const kids = document.createElement('div');
       kids.className = 'tc';
-      renderTree(root, node.children || [], kids, depth + 1);
+      if (node.loaded && node.children) {
+        renderTree(root, node.children, kids, depth + 1);
+      }
 
-      row.addEventListener('click', () => {
+      row.addEventListener('click', async () => {
         const open = kids.classList.toggle('open');
         row.querySelector('.arr').textContent = open ? '▼' : '▶';
+        if (open && !node.loaded) {
+          await loadDirectory(root, node, kids, depth);
+          row.querySelector('.arr').textContent = kids.classList.contains('open') ? '▼' : '▶';
+        }
       });
       container.appendChild(row);
       container.appendChild(kids);
