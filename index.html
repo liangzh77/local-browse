@@ -52,7 +52,7 @@ header h1 { color: var(--text-hi); font-size: 0.95rem; font-weight: 600; }
   flex: 1; color: var(--text-dim); font-size: 0.78rem; font-family: monospace;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.theme-btn, .refresh-btn {
+.theme-btn, .refresh-btn, .nav-btn {
   background: none; border: 1px solid var(--border); border-radius: 6px;
   color: var(--text-dim); cursor: pointer; padding: 0.2rem 0.5rem;
   font-size: 0.8rem; transition: color 0.15s;
@@ -62,7 +62,9 @@ header h1 { color: var(--text-hi); font-size: 0.95rem; font-weight: 600; }
   color: white; cursor: pointer; padding: 0.28rem 0.72rem;
   font-size: 0.8rem; transition: filter 0.15s, opacity 0.15s;
 }
-.theme-btn:hover, .refresh-btn:hover { color: var(--text-hi); }
+.theme-btn:hover, .refresh-btn:hover, .nav-btn:hover:not(:disabled) { color: var(--text-hi); }
+.nav-btn { width: 28px; padding: 0.2rem 0; }
+.nav-btn:disabled { opacity: 0.45; cursor: default; }
 .open-btn:hover { filter: brightness(1.05); }
 .open-btn:disabled { opacity: 0.65; cursor: wait; }
 .refresh-btn.spinning { animation: spin 0.6s linear infinite; }
@@ -192,6 +194,8 @@ main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 <header>
   <h1>LocalBrowse</h1>
+  <button class="nav-btn" id="back-btn" title="后退" aria-label="后退" disabled>‹</button>
+  <button class="nav-btn" id="forward-btn" title="前进" aria-label="前进" disabled>›</button>
   <span class="hpath" id="hpath">—</span>
   <button class="open-btn" id="open-folder-btn" title="选择要浏览的文件夹">打开文件夹</button>
   <button class="refresh-btn" id="refresh-btn" title="刷新文件树">↻</button>
@@ -234,6 +238,9 @@ document.getElementById('theme-btn').addEventListener('click', () => {
   localStorage.setItem('theme', next);
   syncHighlightTheme();
 });
+
+document.getElementById('back-btn').addEventListener('click', () => jumpFileHistory(-1));
+document.getElementById('forward-btn').addEventListener('click', () => jumpFileHistory(1));
 
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if (!html.dataset.theme) syncHighlightTheme();
@@ -355,9 +362,47 @@ marked.use({
 let roots = [];
 let activeFile = null;
 let fileInfoByKey = new Map();
+let fileHistory = [];
+let fileHistoryIndex = -1;
 
 function fileKey(rootId, path) {
   return `${rootId}:${path}`;
+}
+
+function sameFile(a, b) {
+  return Boolean(a && b && a.rootId === b.rootId && a.path === b.path);
+}
+
+function updateHistoryButtons() {
+  const backBtn = document.getElementById('back-btn');
+  const forwardBtn = document.getElementById('forward-btn');
+  if (!backBtn || !forwardBtn) return;
+  backBtn.disabled = fileHistoryIndex <= 0;
+  forwardBtn.disabled = fileHistoryIndex < 0 || fileHistoryIndex >= fileHistory.length - 1;
+}
+
+function recordFileHistory(file) {
+  if (!file) return;
+  const current = fileHistory[fileHistoryIndex];
+  if (sameFile(current, file)) {
+    updateHistoryButtons();
+    return;
+  }
+
+  fileHistory = fileHistory.slice(0, fileHistoryIndex + 1);
+  fileHistory.push({ rootId: file.rootId, path: file.path });
+  fileHistoryIndex = fileHistory.length - 1;
+  updateHistoryButtons();
+}
+
+async function jumpFileHistory(delta) {
+  const nextIndex = fileHistoryIndex + delta;
+  if (nextIndex < 0 || nextIndex >= fileHistory.length) return;
+
+  fileHistoryIndex = nextIndex;
+  updateHistoryButtons();
+  const file = fileHistory[fileHistoryIndex];
+  await loadFile(file.rootId, file.path, { recordHistory: false });
 }
 
 function directoryKey(rootId, path = '') {
@@ -628,8 +673,13 @@ function setActive(file) {
   });
 }
 
-async function loadFile(rootId, path) {
+async function loadFile(rootId, path, options = {}) {
   activeFile = { rootId, path };
+  if (options.recordHistory !== false) {
+    recordFileHistory(activeFile);
+  } else {
+    updateHistoryButtons();
+  }
   updateHeaderPath(activeFile);
   document.getElementById('main').innerHTML = '<div class="msg"><span>Loading...</span></div>';
   document.getElementById('main').style.padding = '';
