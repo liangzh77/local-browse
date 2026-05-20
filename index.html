@@ -537,6 +537,46 @@ function findTreeNode(nodes, path) {
   return null;
 }
 
+function parentDirectoryPaths(path) {
+  const parts = normalizePath(path).split('/').filter(Boolean);
+  parts.pop();
+  return parts.map((_part, index) => parts.slice(0, index + 1).join('/'));
+}
+
+async function revealFileInTree(rootId, path) {
+  try {
+    const root = findRoot(rootId);
+    if (!root) return false;
+
+    const rootRow = document.querySelector(`.ti.root[data-root-header="${CSS.escape(rootId)}"]`);
+    const rootKids = rootRow?.nextElementSibling;
+    if (rootRow && rootKids) {
+      rootKids.classList.add('open');
+      rootRow.querySelector('.arr').textContent = '▼';
+    }
+
+    for (const dirPath of parentDirectoryPaths(path)) {
+      const node = findTreeNode(root.items || [], dirPath);
+      const row = document.querySelector(`.ti[data-root="${CSS.escape(rootId)}"][data-dir-path="${CSS.escape(dirPath)}"]`);
+      const kids = row?.nextElementSibling;
+      if (!node || !row || !kids) return false;
+
+      kids.classList.add('open');
+      row.querySelector('.arr').textContent = '▼';
+
+      if (!node.loaded) {
+        const depth = dirPath.split('/').length - 1;
+        await loadDirectory(root, node, kids, depth);
+      }
+    }
+
+    setActive({ rootId, path });
+    return Boolean(document.querySelector(`.ti[data-root="${CSS.escape(rootId)}"][data-path="${CSS.escape(path)}"]`));
+  } catch {
+    return false;
+  }
+}
+
 async function restoreOpenDirectories(openDirs) {
   if (!openDirs?.size) return;
 
@@ -594,6 +634,7 @@ async function loadFile(rootId, path) {
   document.getElementById('main').innerHTML = '<div class="msg"><span>Loading...</span></div>';
   document.getElementById('main').style.padding = '';
   setActive(activeFile);
+  await revealFileInTree(rootId, path);
 
   const info = fileInfoByKey.get(fileKey(rootId, path)) || { previewable: true, previewKind: 'text', ext: path.split('.').pop().toLowerCase() };
   const kind = info.previewKind;
