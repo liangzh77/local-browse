@@ -333,7 +333,7 @@ function currentPreviewBg() {
 }
 
 function canCopyContent(kind) {
-  return ['markdown', 'svg', 'text', 'code', 'image'].includes(kind);
+  return ['markdown', 'html', 'svg', 'text', 'code', 'image'].includes(kind);
 }
 
 function setButtonStatus(button, label, reset = true) {
@@ -446,8 +446,12 @@ async function copyCurrentFile(button) {
   }
 }
 
-function renderFramePreview(rootId, path) {
-  const body = renderPreviewShell(rootId, path, 'frame', { canCopyContent: false, bodyClass: 'frame' });
+function renderFramePreview(rootId, path, kind = 'frame', options = {}) {
+  const body = renderPreviewShell(rootId, path, kind, {
+    content: options.content || '',
+    canCopyContent: options.canCopyContent ?? canCopyContent(kind),
+    bodyClass: 'frame',
+  });
 
   const iframe = document.createElement('iframe');
   iframe.src = rawFileUrl(rootId, path);
@@ -863,8 +867,21 @@ async function loadFile(rootId, path, options = {}) {
     return;
   }
 
-  if (kind === 'pdf' || kind === 'html') {
-    renderFramePreview(rootId, path);
+  if (kind === 'pdf') {
+    renderFramePreview(rootId, path, kind, { canCopyContent: false });
+    return;
+  }
+
+  if (kind === 'html') {
+    try {
+      const res = await fetch(`/api/file?root=${encodeURIComponent(rootId)}&path=${encodeURIComponent(path)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { content } = await res.json();
+      renderFramePreview(rootId, path, kind, { content, canCopyContent: true });
+    } catch (e) {
+      const body = renderPreviewShell(rootId, path, kind, { canCopyContent: false });
+      body.innerHTML = `<div class="msg"><span>Read failed: ${escapeHtml(e.message)}</span></div>`;
+    }
     return;
   }
 
@@ -874,8 +891,8 @@ async function loadFile(rootId, path, options = {}) {
     const { content, ext, kind: detectedKind, truncated } = await res.json();
     renderContent(rootId, detectedKind || kind, content, path, ext, truncated);
   } catch (e) {
-    document.getElementById('main').innerHTML =
-      `<div class="msg"><span>Read failed: ${escapeHtml(e.message)}</span></div>`;
+    const body = renderPreviewShell(rootId, path, kind, { canCopyContent: false });
+    body.innerHTML = `<div class="msg"><span>Read failed: ${escapeHtml(e.message)}</span></div>`;
   }
 }
 
