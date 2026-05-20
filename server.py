@@ -37,6 +37,7 @@ VISIBLE_DOT_ENTRIES = {'.memory'}
 
 SAMPLE_BYTES = 8192
 MAX_TEXT_BYTES = 2 * 1024 * 1024
+IS_WINDOWS = os.name == 'nt'
 
 CODE_EXTS = {
     '.bat', '.c', '.cfg', '.clj', '.cmake', '.conf', '.cpp', '.cs', '.css',
@@ -176,6 +177,104 @@ def classify_file_for_listing(path: Path):
     if ext in CODE_EXTS or lower_name in TEXT_NAMES:
         return {'previewable': True, 'previewKind': 'code', 'mime': 'text/plain'}
     return {'previewable': True, 'previewKind': 'text', 'mime': 'text/plain'}
+
+
+def copy_file_to_clipboard(path: Path) -> None:
+    if not IS_WINDOWS:
+        raise RuntimeError('copy file is only supported on Windows')
+
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalFree.restype = wintypes.HGLOBAL
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
+    user32.RegisterClipboardFormatW.restype = wintypes.UINT
+
+    CF_HDROP = 15
+    GMEM_MOVEABLE = 0x0002
+    DROP_EFFECT_COPY = 1
+
+    class DROPFILES(ctypes.Structure):
+        _fields_ = [
+            ('pFiles', wintypes.DWORD),
+            ('x', wintypes.LONG),
+            ('y', wintypes.LONG),
+            ('fNC', wintypes.BOOL),
+            ('fWide', wintypes.BOOL),
+        ]
+
+    text = str(path) + '\0\0'
+    encoded = text.encode('utf-16le')
+    header_size = ctypes.sizeof(DROPFILES)
+    total_size = header_size + len(encoded)
+
+    hdrop = kernel32.GlobalAlloc(GMEM_MOVEABLE, total_size)
+    if not hdrop:
+        raise OSError('GlobalAlloc failed')
+
+    locked = kernel32.GlobalLock(hdrop)
+    if not locked:
+        kernel32.GlobalFree(hdrop)
+        raise OSError('GlobalLock failed')
+
+    drop = DROPFILES()
+    drop.pFiles = header_size
+    drop.x = 0
+    drop.y = 0
+    drop.fNC = False
+    drop.fWide = True
+    ctypes.memmove(locked, ctypes.byref(drop), header_size)
+    ctypes.memmove(locked + header_size, encoded, len(encoded))
+    kernel32.GlobalUnlock(hdrop)
+
+    effect = kernel32.GlobalAlloc(GMEM_MOVEABLE, ctypes.sizeof(wintypes.DWORD))
+    if not effect:
+        kernel32.GlobalFree(hdrop)
+        raise OSError('GlobalAlloc failed')
+    effect_locked = kernel32.GlobalLock(effect)
+    if not effect_locked:
+        kernel32.GlobalFree(hdrop)
+        kernel32.GlobalFree(effect)
+        raise OSError('GlobalLock failed')
+    ctypes.c_uint32.from_address(effect_locked).value = DROP_EFFECT_COPY
+    kernel32.GlobalUnlock(effect)
+
+    preferred_drop_effect = user32.RegisterClipboardFormatW('Preferred DropEffect')
+
+    if not user32.OpenClipboard(None):
+        kernel32.GlobalFree(hdrop)
+        kernel32.GlobalFree(effect)
+        raise OSError('OpenClipboard failed')
+    try:
+        if not user32.EmptyClipboard():
+            raise OSError('EmptyClipboard failed')
+        if not user32.SetClipboardData(CF_HDROP, hdrop):
+            raise OSError('SetClipboardData CF_HDROP failed')
+        hdrop = None
+        if preferred_drop_effect and not user32.SetClipboardData(preferred_drop_effect, effect):
+            raise OSError('SetClipboardData Preferred DropEffect failed')
+        effect = None
+    finally:
+        user32.CloseClipboard()
+        if hdrop:
+            kernel32.GlobalFree(hdrop)
+        if effect:
+            kernel32.GlobalFree(effect)
 
 
 def root_id(path: Path) -> str:
@@ -367,6 +466,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._remove_root()
             return
 
+        if parsed.path == '/api/copy-file':
+            self._copy_file()
+            return
+
         self.send_error(404)
 
     def _build_roots_payload(self):
@@ -504,6 +607,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         self._send_json({'ok': True, 'roots': self._build_roots_payload()})
+
+    def _copy_file(self):
+        try:
+            length = int(self.headers.get('Content-Length', '0') or '0')
+            body = self.rfile.read(length) if length else b'{}'
+            data = json.loads(body.decode('utf-8') or '{}')
+        except (ValueError, json.JSONDecodeError):
+            self.send_error(400, 'Invalid JSON')
+            return
+
+        root_id_value = str(data.get('root') or '')
+        rel_path = str(data.get('path') or '')
+        full = self._resolve_in_root(root_id_value, rel_path)
+        if full is None:
+            self.send_error(403)
+            return
+        if not full.is_file():
+            self.send_error(404)
+            return
+
+        try:
+            copy_file_to_clipboard(full)
+        except Exception as exc:
+            self._send_json({'ok': False, 'error': str(exc)})
+            return
+
+        self._send_json({'ok': True, 'path': rel_path})
 
     def _ask_directory(self):
         holder = {}

@@ -118,6 +118,22 @@ main { flex: 1; overflow-y: auto; padding: 2rem 2.5rem; background: var(--previe
 main::-webkit-scrollbar { width: 6px; }
 main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
+.preview-toolbar {
+  position: sticky; top: 0; z-index: 5; min-height: 32px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 0.25rem;
+  padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border);
+  background: var(--preview-bg);
+}
+.copy-btn {
+  border: 0; background: transparent; color: var(--text-dim);
+  cursor: pointer; border-radius: 4px; padding: 0.18rem 0.45rem;
+  font-size: 0.72rem; line-height: 1.2;
+}
+.copy-btn:hover:not(:disabled) { background: var(--bg2); color: var(--text-hi); }
+.copy-btn:disabled { opacity: 0.42; cursor: default; }
+.preview-body { padding: 1.5rem 2.5rem 2rem; }
+.preview-body.frame { padding: 0; }
+
 /* ── Markdown ────────────────────────────────────────── */
 .md { max-width: 800px; line-height: 1.7; color: var(--text); background: var(--preview-bg); }
 .md h1,.md h2,.md h3,.md h4 { color: var(--text-hi); margin: 1.5rem 0 0.75rem; font-weight: 600; }
@@ -316,14 +332,126 @@ function currentPreviewBg() {
   return getComputedStyle(document.documentElement).getPropertyValue('--preview-bg').trim() || '#ffffff';
 }
 
-function renderFramePreview(rootId, path) {
+function canCopyContent(kind) {
+  return ['markdown', 'svg', 'text', 'code', 'image'].includes(kind);
+}
+
+function setButtonStatus(button, label, reset = true) {
+  button.textContent = label;
+  if (reset) {
+    setTimeout(() => {
+      if (button.isConnected) button.textContent = button.dataset.label || label;
+    }, 1200);
+  }
+}
+
+function renderPreviewShell(rootId, path, kind, options = {}) {
   const main = document.getElementById('main');
   main.innerHTML = '';
   main.style.padding = '0';
 
+  currentPreview = {
+    rootId,
+    path,
+    kind,
+    content: options.content || '',
+    canCopyContent: options.canCopyContent ?? canCopyContent(kind),
+  };
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'preview-toolbar';
+
+  const copyContent = document.createElement('button');
+  copyContent.className = 'copy-btn';
+  copyContent.type = 'button';
+  copyContent.dataset.label = '复制内容';
+  copyContent.textContent = '复制内容';
+  copyContent.title = currentPreview.canCopyContent ? '复制当前预览内容' : '此类型不支持复制内容';
+  copyContent.disabled = !currentPreview.canCopyContent;
+  copyContent.addEventListener('click', () => copyPreviewContent(copyContent));
+
+  const copyFile = document.createElement('button');
+  copyFile.className = 'copy-btn';
+  copyFile.type = 'button';
+  copyFile.dataset.label = '复制文件';
+  copyFile.textContent = '复制文件';
+  copyFile.title = '复制当前文件，方便到文件夹中粘贴';
+  copyFile.addEventListener('click', () => copyCurrentFile(copyFile));
+
+  toolbar.append(copyContent, copyFile);
+
+  const body = document.createElement('div');
+  body.className = options.bodyClass ? `preview-body ${options.bodyClass}` : 'preview-body';
+
+  main.append(toolbar, body);
+  return body;
+}
+
+async function copyPreviewContent(button) {
+  if (!currentPreview?.canCopyContent) return;
+  try {
+    if (currentPreview.kind === 'image') {
+      await copyImageToClipboard(currentPreview.rootId, currentPreview.path);
+    } else {
+      await navigator.clipboard.writeText(currentPreview.content || '');
+    }
+    setButtonStatus(button, '已复制');
+  } catch (e) {
+    setButtonStatus(button, '失败');
+    console.error('Copy content failed:', e);
+  }
+}
+
+async function copyImageToClipboard(rootId, path) {
+  const blob = await fetch(rawFileUrl(rootId, path)).then(res => {
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.blob();
+  });
+
+  const img = new Image();
+  const url = URL.createObjectURL(blob);
+  try {
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = url;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!pngBlob) throw new Error('Cannot encode image');
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function copyCurrentFile(button) {
+  if (!currentPreview) return;
+  try {
+    const res = await fetch('/api/copy-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root: currentPreview.rootId, path: currentPreview.path }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    setButtonStatus(button, '已复制');
+  } catch (e) {
+    setButtonStatus(button, '失败');
+    console.error('Copy file failed:', e);
+  }
+}
+
+function renderFramePreview(rootId, path) {
+  const body = renderPreviewShell(rootId, path, 'frame', { canCopyContent: false, bodyClass: 'frame' });
+
   const iframe = document.createElement('iframe');
   iframe.src = rawFileUrl(rootId, path);
-  iframe.style.cssText = `width:100%;height:calc(100vh - 44px);border:none;display:block;background:${currentPreviewBg()};`;
+  iframe.style.cssText = `width:100%;height:calc(100vh - 44px - 33px);border:none;display:block;background:${currentPreviewBg()};`;
   iframe.addEventListener('load', () => {
     try {
       const doc = iframe.contentDocument;
@@ -338,7 +466,7 @@ function renderFramePreview(rootId, path) {
     }
   });
 
-  main.appendChild(iframe);
+  body.appendChild(iframe);
 }
 
 // ── marked 配置 ───────────────────────────────────────
@@ -369,6 +497,7 @@ let activeFile = null;
 let fileInfoByKey = new Map();
 let fileHistory = [];
 let fileHistoryIndex = -1;
+let currentPreview = null;
 
 function fileKey(rootId, path) {
   return `${rootId}:${path}`;
@@ -695,7 +824,8 @@ async function loadFile(rootId, path, options = {}) {
   const kind = info.previewKind;
 
   if (!info.previewable) {
-    document.getElementById('main').innerHTML = `
+    const body = renderPreviewShell(rootId, path, kind, { canCopyContent: false });
+    body.innerHTML = `
       <div class="msg">
         <span>This file is listed, but cannot be previewed.</span>
         <code>${escapeHtml(path)}</code>
@@ -704,7 +834,8 @@ async function loadFile(rootId, path, options = {}) {
   }
 
   if (kind === 'image') {
-    document.getElementById('main').innerHTML = `
+    const body = renderPreviewShell(rootId, path, kind, { canCopyContent: true });
+    body.innerHTML = `
       <div class="imgview">
         <img src="${rawFileUrl(rootId, path)}" alt="${escapeHtml(path)}">
         <div class="caption">${escapeHtml(path)}</div>
@@ -713,7 +844,8 @@ async function loadFile(rootId, path, options = {}) {
   }
 
   if (kind === 'audio') {
-    document.getElementById('main').innerHTML = `
+    const body = renderPreviewShell(rootId, path, kind, { canCopyContent: false });
+    body.innerHTML = `
       <div class="imgview">
         <audio src="${rawFileUrl(rootId, path)}" controls style="width:100%"></audio>
         <div class="caption">${escapeHtml(path)}</div>
@@ -722,7 +854,8 @@ async function loadFile(rootId, path, options = {}) {
   }
 
   if (kind === 'video') {
-    document.getElementById('main').innerHTML = `
+    const body = renderPreviewShell(rootId, path, kind, { canCopyContent: false });
+    body.innerHTML = `
       <div class="imgview">
         <video src="${rawFileUrl(rootId, path)}" controls style="max-width:100%;max-height:70vh;border:1px solid var(--border);border-radius:6px"></video>
         <div class="caption">${escapeHtml(path)}</div>
@@ -754,7 +887,10 @@ function updateHeaderPath(file = null) {
 }
 
 function renderContent(rootId, kind, content, path, ext, truncated = false) {
-  const main = document.getElementById('main');
+  const body = renderPreviewShell(rootId, path, kind, {
+    content,
+    canCopyContent: canCopyContent(kind),
+  });
   const truncatedNote = truncated ? '<div class="caption">Large file, showing first 2 MB only.</div>' : '';
 
   if (kind === 'markdown') {
@@ -770,11 +906,10 @@ function renderContent(rootId, kind, content, path, ext, truncated = false) {
         loadFile(rootId, resolveRelativePath(path, href));
       });
     });
-    main.innerHTML = '';
-    main.appendChild(div);
+    body.appendChild(div);
 
   } else if (kind === 'svg') {
-    main.innerHTML = `
+    body.innerHTML = `
       <div class="svgview">
         ${content}
         <div class="caption">${escapeHtml(path)}</div>
@@ -792,8 +927,7 @@ function renderContent(rootId, kind, content, path, ext, truncated = false) {
       note.textContent = 'Large file, showing first 2 MB only.';
       div.appendChild(note);
     }
-    main.innerHTML = '';
-    main.appendChild(div);
+    body.appendChild(div);
 
   } else {
     const lang = EXT_LANG[ext] || 'plaintext';
@@ -801,7 +935,7 @@ function renderContent(rootId, kind, content, path, ext, truncated = false) {
       ? hljs.highlight(content, { language: lang }).value
       : hljs.highlightAuto(content).value;
 
-    main.innerHTML = `
+    body.innerHTML = `
       <div class="codefile">
         <div class="codefile-header">${escapeHtml(path)}</div>
         <pre><code class="hljs">${highlighted}</code></pre>
