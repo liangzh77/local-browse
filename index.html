@@ -360,6 +360,28 @@ function fileKey(rootId, path) {
   return `${rootId}:${path}`;
 }
 
+function directoryKey(rootId, path = '') {
+  return `${rootId}:${path}`;
+}
+
+function captureOpenDirectories() {
+  const openDirs = new Set();
+
+  document.querySelectorAll('.ti.root').forEach(row => {
+    if (row.nextElementSibling?.classList.contains('open')) {
+      openDirs.add(directoryKey(row.dataset.rootHeader || '', ''));
+    }
+  });
+
+  document.querySelectorAll('.ti[data-dir-path]').forEach(row => {
+    if (row.nextElementSibling?.classList.contains('open')) {
+      openDirs.add(directoryKey(row.dataset.root || '', row.dataset.dirPath || ''));
+    }
+  });
+
+  return openDirs;
+}
+
 function indexFiles(rootId, nodes) {
   nodes.forEach(node => {
     if (node.type === 'dir') indexFiles(rootId, node.children || []);
@@ -398,7 +420,7 @@ function resolveRelativePath(fromPath, targetPath) {
   return normalizePath([...baseParts, targetPath].join('/'));
 }
 
-async function loadDirectory(root, node, kids, depth) {
+async function loadDirectory(root, node, kids, depth, renderOpenDirs = null) {
   if (node.loading) return;
   node.loading = true;
   kids.classList.add('open');
@@ -416,7 +438,7 @@ async function loadDirectory(root, node, kids, depth) {
 
     kids.innerHTML = '';
     if (node.children.length) {
-      renderTree(root, node.children, kids, depth + 1);
+      renderTree(root, node.children, kids, depth + 1, renderOpenDirs);
     } else {
       kids.innerHTML = `<div class="ti" style="padding-left:${1.25 + (depth + 1) * 0.875}rem"><span class="arr"></span><span class="ic"></span><span class="nm">空文件夹</span></div>`;
     }
@@ -427,19 +449,26 @@ async function loadDirectory(root, node, kids, depth) {
   }
 }
 
-function renderTree(root, nodes, container, depth = 0) {
+function renderTree(root, nodes, container, depth = 0, openDirs = null) {
   nodes.forEach(node => {
     const pad = `${1.25 + depth * 0.875}rem`;
     if (node.type === 'dir') {
       const row = document.createElement('div');
       row.className = 'ti';
+      row.dataset.root = root.id;
+      row.dataset.dirPath = node.path;
       row.style.paddingLeft = pad;
       row.innerHTML = `<span class="arr">▶</span><span class="ic">📁</span><span class="nm">${escapeHtml(node.name)}</span>`;
 
       const kids = document.createElement('div');
       kids.className = 'tc';
       if (node.loaded && node.children) {
-        renderTree(root, node.children, kids, depth + 1);
+        renderTree(root, node.children, kids, depth + 1, openDirs);
+      }
+
+      if (openDirs?.has(directoryKey(root.id, node.path))) {
+        kids.classList.add('open');
+        row.querySelector('.arr').textContent = '▼';
       }
 
       row.addEventListener('click', async () => {
@@ -467,7 +496,7 @@ function renderTree(root, nodes, container, depth = 0) {
   });
 }
 
-function renderRoot(root, container) {
+function renderRoot(root, container, openDirs = null) {
   const row = document.createElement('div');
   row.className = 'ti root';
   row.dataset.rootHeader = root.id;
@@ -479,8 +508,10 @@ function renderRoot(root, container) {
     <button class="close-root" title="Close folder" aria-label="Close folder">×</button>`;
 
   const kids = document.createElement('div');
-  kids.className = 'tc open';
-  renderTree(root, root.items || [], kids, 0);
+  const rootOpen = openDirs ? openDirs.has(directoryKey(root.id, '')) : true;
+  kids.className = rootOpen ? 'tc open' : 'tc';
+  row.querySelector('.arr').textContent = rootOpen ? '▼' : '▶';
+  renderTree(root, root.items || [], kids, 0, openDirs);
 
   row.addEventListener('click', () => {
     const open = kids.classList.toggle('open');
@@ -493,6 +524,47 @@ function renderRoot(root, container) {
 
   container.appendChild(row);
   container.appendChild(kids);
+}
+
+function findTreeNode(nodes, path) {
+  for (const node of nodes || []) {
+    if (node.type === 'dir' && node.path === path) return node;
+    if (node.type === 'dir' && path.startsWith(`${node.path}/`)) {
+      const found = findTreeNode(node.children || [], path);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+async function restoreOpenDirectories(openDirs) {
+  if (!openDirs?.size) return;
+
+  const dirs = [...openDirs]
+    .map(key => {
+      const splitAt = key.indexOf(':');
+      return { rootId: key.slice(0, splitAt), path: key.slice(splitAt + 1) };
+    })
+    .filter(item => item.path)
+    .sort((a, b) => a.path.split('/').length - b.path.split('/').length);
+
+  for (const { rootId, path } of dirs) {
+    const root = findRoot(rootId);
+    if (!root) continue;
+
+    const node = findTreeNode(root.items || [], path);
+    const row = document.querySelector(`.ti[data-root="${CSS.escape(rootId)}"][data-dir-path="${CSS.escape(path)}"]`);
+    const kids = row?.nextElementSibling;
+    if (!node || !row || !kids) continue;
+
+    kids.classList.add('open');
+    row.querySelector('.arr').textContent = '▼';
+
+    if (!node.loaded) {
+      const depth = path.split('/').length - 1;
+      await loadDirectory(root, node, kids, depth, openDirs);
+    }
+  }
 }
 
 function setActive(file) {
@@ -642,14 +714,14 @@ function renderContent(rootId, kind, content, path, ext, truncated = false) {
   }
 }
 
-function setTreeData(nextRoots) {
+function setTreeData(nextRoots, openDirs = null) {
   roots = nextRoots || [];
   fileInfoByKey = new Map();
   roots.forEach(root => indexFiles(root.id, root.items || []));
 
   const sidebar = document.getElementById('sidebar');
   sidebar.innerHTML = '';
-  roots.forEach(root => renderRoot(root, sidebar));
+  roots.forEach(root => renderRoot(root, sidebar, openDirs));
 }
 
 function findDefaultFile() {
@@ -660,10 +732,12 @@ function findDefaultFile() {
   return null;
 }
 
-async function loadTree() {
+async function loadTree(options = {}) {
   try {
+    const openDirs = options.preserveOpenState ? captureOpenDirectories() : null;
     const tree = await fetch('/api/tree').then(r => r.json());
-    setTreeData(tree.roots || []);
+    setTreeData(tree.roots || [], openDirs);
+    await restoreOpenDirectories(openDirs);
     updateHeaderPath(activeFile);
 
     if (activeFile) {
@@ -719,7 +793,7 @@ async function init() {
 document.getElementById('refresh-btn').addEventListener('click', async () => {
   const btn = document.getElementById('refresh-btn');
   btn.classList.add('spinning');
-  await loadTree();
+  await loadTree({ preserveOpenState: true });
   btn.classList.remove('spinning');
 });
 
