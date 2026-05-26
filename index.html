@@ -262,6 +262,16 @@ document.getElementById('theme-btn').addEventListener('click', () => {
 
 document.getElementById('back-btn').addEventListener('click', () => jumpFileHistory(-1));
 document.getElementById('forward-btn').addEventListener('click', () => jumpFileHistory(1));
+document.addEventListener('keydown', (event) => {
+  if (shouldIgnoreHistoryKey(event)) return;
+  if (event.key === 'ArrowLeft') {
+    event.preventDefault();
+    jumpFileHistory(-1);
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault();
+    jumpFileHistory(1);
+  }
+});
 
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if (!html.dataset.theme) syncHighlightTheme();
@@ -556,6 +566,14 @@ async function jumpFileHistory(delta) {
   updateHistoryButtons();
   const file = fileHistory[fileHistoryIndex];
   await loadFile(file.rootId, file.path, { recordHistory: false });
+}
+
+function shouldIgnoreHistoryKey(event) {
+  if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return true;
+  const target = event.target;
+  if (!target) return false;
+  const tag = target.tagName;
+  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag);
 }
 
 function directoryKey(rootId, path = '') {
