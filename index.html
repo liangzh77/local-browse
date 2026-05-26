@@ -332,6 +332,21 @@ function currentPreviewBg() {
   return getComputedStyle(document.documentElement).getPropertyValue('--preview-bg').trim() || '#ffffff';
 }
 
+function wikiLinkToAnchor(rawTarget) {
+  const [targetPart, labelPart] = String(rawTarget).split('|');
+  const target = targetPart.trim();
+  if (!target) return escapeHtml(`[[${rawTarget}]]`);
+  const label = (labelPart || target).trim();
+  return `<a href="#" data-file-link="${escapeHtml(target)}">${escapeHtml(label)}</a>`;
+}
+
+function preprocessWikiLinks(markdown) {
+  return String(markdown).split(/(```[\s\S]*?```)/g).map(part => {
+    if (part.startsWith('```')) return part;
+    return part.replace(/\[\[([^\]\n]+)\]\]/g, (_match, target) => wikiLinkToAnchor(target));
+  }).join('');
+}
+
 function canCopyContent(kind) {
   return ['markdown', 'html', 'svg', 'text', 'code', 'image'].includes(kind);
 }
@@ -597,10 +612,11 @@ function normalizePath(path) {
 function resolveRelativePath(fromPath, targetPath) {
   if (!targetPath) return '';
   if (/^(https?:|mailto:|#)/i.test(targetPath)) return targetPath;
-  if (targetPath.startsWith('/')) return normalizePath(targetPath.slice(1));
+  const cleanTarget = targetPath.split('#')[0];
+  if (cleanTarget.startsWith('/')) return normalizePath(cleanTarget.slice(1));
   const baseParts = fromPath.split('/');
   baseParts.pop();
-  return normalizePath([...baseParts, targetPath].join('/'));
+  return normalizePath([...baseParts, cleanTarget].join('/'));
 }
 
 async function loadDirectory(root, node, kids, depth, renderOpenDirs = null) {
@@ -933,7 +949,7 @@ function renderContent(rootId, kind, content, path, ext, truncated = false) {
   if (kind === 'markdown') {
     const div = document.createElement('div');
     div.className = 'md';
-    div.innerHTML = marked.parse(content);
+    div.innerHTML = marked.parse(preprocessWikiLinks(content));
     div.querySelectorAll('input[type=checkbox]').forEach(cb => cb.disabled = true);
     div.querySelectorAll('a[data-file-link]').forEach(a => {
       const href = a.getAttribute('data-file-link');
