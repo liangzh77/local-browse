@@ -230,6 +230,7 @@ main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
 <script>
 // ── 主题 ──────────────────────────────────────────────
 const html = document.documentElement;
@@ -296,6 +297,7 @@ function fileIcon(kind, ext) {
   if (kind === 'audio')                   return '🎵';
   if (kind === 'video')                   return '🎬';
   if (kind === 'pdf')                     return '📄';
+  if (kind === 'docx')                    return '📝';
   if (kind === 'binary' || kind === 'unreadable') return '📦';
   if (ext === 'md')                      return '📝';
   if (['png','jpg','jpeg','gif','webp'].includes(ext)) return '🖼';
@@ -318,6 +320,7 @@ function previewLabel(node) {
     audio: '音频',
     video: '视频',
     pdf: 'PDF',
+    docx: 'Word',
     code: '文本',
     text: '文本',
   };
@@ -496,6 +499,34 @@ function renderFramePreview(rootId, path, kind = 'frame', options = {}) {
   });
 
   body.appendChild(iframe);
+}
+
+async function renderDocxPreview(rootId, path) {
+  const body = renderPreviewShell(rootId, path, 'docx', { canCopyContent: false });
+  body.innerHTML = '<div class="msg"><span>Loading Word document...</span></div>';
+
+  try {
+    if (!window.mammoth) throw new Error('mammoth.js not loaded');
+    const res = await fetch(rawFileUrl(rootId, path));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const arrayBuffer = await res.arrayBuffer();
+    const result = await mammoth.convertToHtml({ arrayBuffer });
+
+    const div = document.createElement('div');
+    div.className = 'md';
+    div.innerHTML = result.value || '<p>Empty document</p>';
+    body.innerHTML = '';
+    body.appendChild(div);
+
+    if (result.messages?.length) {
+      const note = document.createElement('div');
+      note.className = 'caption';
+      note.textContent = `Word preview warnings: ${result.messages.length}`;
+      body.appendChild(note);
+    }
+  } catch (e) {
+    body.innerHTML = `<div class="msg"><span>Read failed: ${escapeHtml(e.message)}</span></div>`;
+  }
 }
 
 // ── marked 配置 ───────────────────────────────────────
@@ -923,6 +954,11 @@ async function loadFile(rootId, path, options = {}) {
 
   if (kind === 'pdf') {
     renderFramePreview(rootId, path, kind, { canCopyContent: false });
+    return;
+  }
+
+  if (kind === 'docx') {
+    renderDocxPreview(rootId, path);
     return;
   }
 

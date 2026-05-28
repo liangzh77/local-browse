@@ -70,6 +70,7 @@ SVG_EXTS = {'.svg'}
 PDF_EXTS = {'.pdf'}
 HTML_EXTS = {'.html', '.htm'}
 MARKDOWN_EXTS = {'.md'}
+DOCX_EXTS = {'.docx'}
 
 
 def file_ext(path: Path) -> str:
@@ -168,6 +169,8 @@ def classify_file_for_listing(path: Path):
         return {'previewable': True, 'previewKind': 'svg', 'mime': 'image/svg+xml'}
     if ext in PDF_EXTS:
         return {'previewable': True, 'previewKind': 'pdf', 'mime': 'application/pdf'}
+    if ext in DOCX_EXTS:
+        return {'previewable': True, 'previewKind': 'docx', 'mime': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
     if ext in IMAGE_EXTS:
         return {'previewable': True, 'previewKind': 'image', 'mime': mimetypes.guess_type(path.name)[0] or 'image/*'}
     if ext in AUDIO_EXTS:
